@@ -1,0 +1,16 @@
+The source in this directory contains the C++ Kalmar version of LULESH 2.0. The code in this directory compiles and runs correctly using the 0.5 version of our C++ Kalmar compiler using either the 1.0p or 1.0f HSA stack. Significantly better performance is seen with 1.0p.  
+
+Building the code:
+  1) Make sure that the Kalmar compiler and associated tools are in the path. These usually exist in /opt/clamp/bin and /opt/amd/bin
+  2) Verify that LD_LIBARY_PATH includes the HSA libraries (/opt/hsa/lib)
+  3) use the Makefile (type "make" on the command line)
+
+Next Steps:
+  There is an issue with the BLOCKSIZE define in the Makefile. The original OpenCL code used a value of 256. This corresponds to a Tahiti dGPU.
+  However, this does not work with the 0.5 compiler on a Kaveri. LDS in OpenCL corresponds to tiled_static memory in Kalmar. How this handles
+  code that requests more memory than the hardware provides is unclear (and problematic). Kaveri works with BLOCKSIZE=128. 
+  
+  This code is written using the APU (pointer) syntax. To run this code on a dGPU will require a code change to use array_view. 
+  
+  
+
