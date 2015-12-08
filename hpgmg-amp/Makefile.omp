@@ -1,0 +1,115 @@
+# Makefile for OpenMP using gcc
+# Supports a mix of c and cpp files
+
+OBJDIR = build/obj/finite-volume/source
+BINDIR = build/bin
+SRCDIR = finite-volume/source
+# OPERATOR can be 7pt, or 27pt for old stuff
+# of fv2 or fv4 for newer
+# fv2 is a 7pt order 2 stencil.
+OPERATOR=7pt
+
+# Default is 8 for these values, but 64 works better with GPU
+#BLOCKCOPY=-DBLOCKCOPY_TILE_K=64 -DBLOCKCOPY_TILE_J=64
+BLOCKCOPY=-DBLOCKCOPY_TILE_K=64 -DBLOCKCOPY_TILE_J=64
+
+VERSION = NONE
+
+# CONSTANT can be -DSTENCIL_CONSTANT_COEFFICIENT or blank
+#CONSTANT = -DSTENCIL_CONSTANT_COEFFICIENT
+CONSTANT =
+
+# SOLVER can be BICGSTAB, CG, CABICGSTAT, or CACG.
+# So far only BICGSTAB has been tested
+SOLVER = BICGSTAB
+
+# SMOOTHER can be CHEBY or GSRB or JACOBI or L1JACOBI
+SMOOTHER = CHEBY
+
+# GSRB_METHOD can be -DGSRB_FP
+# or -DGSRB_STRIDE2 (currently not implemented for AMP)
+# or -DGSRB_BRANCH
+# or blank.
+# No effect for SMOOTHER!=GSRB.
+# Can add -DGSRB_OOP for out of place
+GSRB_METHOD = -DGSRB_BRANCH
+
+# FUSE can be -DSTENCIL_FUSE_BC, -DSTENCIL_FUSE_DINV, both, or blank
+# Best single-processor performance is blank
+#FUSE = -DSTENCIL_FUSE_BC -DSTENCIL_FUSE_DINV
+FUSE =
+
+# BC can be -DUSE_PERIODIC_BC or blank
+# 13-point requires -DUSE_PERIODIC_BC, 27-point recommends it.
+BC=
+
+# PROBLEM can be -DUSE_HELMHOLTZ or blank (Poisson)
+PROBLEM =
+
+# VCYCLES can be V, or U.  V is suggested
+VCYCLES = V
+
+# FCYCLES can be -DUSE_FCYCLES=1 or blank (to use just U or V cycles)
+FCYCLES = -DUSE_FCYCLES=1
+
+OPENMP = -fopenmp
+
+INCLUDES = -I. -I/usr/include
+
+CC          = /usr/bin/gcc
+
+CC_CPPFLAGS = -DUSE_SUBCOMM=1 $(FUSE) $(BC) \
+              -DUSE_$(VCYCLES)CYCLES=1 -DUSE_$(SMOOTHER)=1 $(PROBLEM)
+CC_CPPFLAGS += $(FCYCLES)
+CC_CPPFLAGS += -DUSE_$(SOLVER)=1
+CC_CPPFLAGS += $(GSRB_METHOD)
+CC_CPPFLAGS += -DOPERATOR_$(OPERATOR)
+CC_CPPFLAGS += $(BLOCKCOPY)
+CC_CPPFLAGS += $(LOCAL)
+CC_CPPFLAGS += $(CONSTANT)
+
+CC_FLAGS    = -O3 -march=bdver2 -mavx -ffast-math $(OPENMP)
+
+LD      = /usr/bin/g++
+LDFLAGS = -g $(OPENMP)
+LDLIBS  =
+
+EXEC = hpgmg-fv-omp
+
+OBJS = $(OBJDIR)/hpgmg-fv.o \
+       $(OBJDIR)/level.o \
+       $(OBJDIR)/mg.o \
+       $(OBJDIR)/operators.$(OPERATOR).o \
+       $(OBJDIR)/solvers.o \
+       $(OBJDIR)/timers.o
+
+$(BINDIR)/$(EXEC): bindir_exist objdir_exist $(OBJS)
+	$(LD) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
+
+$(OBJDIR)/hpgmg-fv.o: $(SRCDIR)/hpgmg-fv.c $(SRCDIR)/*.h Makefile.omp
+	$(CC) $(CC_CPPFLAGS) $(INCLUDES) $(CC_FLAGS) -c $< -o $@
+
+$(OBJDIR)/level.o: $(SRCDIR)/level.c $(SRCDIR)/*.h
+	$(CC) $(CC_CPPFLAGS) $(INCLUDES) $(CC_FLAGS) -c $< -o $@
+
+$(OBJDIR)/mg.o: $(SRCDIR)/mg.c $(SRCDIR)/*.h
+	$(CC) $(CC_CPPFLAGS) $(INCLUDES) $(CC_FLAGS) -c $< -o $@
+
+$(OBJDIR)/operators.$(OPERATOR).o: $(SRCDIR)/operators.$(OPERATOR).c Makefile.omp $(SRCDIR)/*.h $(SRCDIR)/operators/*.c
+	$(CC) $(CC_CPPFLAGS) $(INCLUDES) $(CC_FLAGS) -c $< -o $@
+
+$(OBJDIR)/solvers.o: $(SRCDIR)/solvers.c $(SRCDIR)/*.h $(SRCDIR)/solvers/*.c
+	$(CC) $(CC_CPPFLAGS) $(INCLUDES) $(CC_FLAGS) -c $< -o $@
+
+$(OBJDIR)/timers.o: $(SRCDIR)/timers.c $(SRCDIR)/timers.h $(SRCDIR)/timers/*.c
+	$(CC) $(CC_CPPFLAGS) $(INCLUDES) $(CC_FLAGS) -c $< -o $@
+
+.PHONY=clean objdir_exist bindir_exist
+clean:
+	rm $(OBJDIR)/*.o $(BINDIR)/hpgmg-fv-omp
+
+objdir_exist:
+	mkdir -p $(OBJDIR)
+
+bindir_exist:
+	mkdir -p $(BINDIR)

@@ -1,0 +1,58 @@
+As C++ AMP / Kalmar needs its source to be written in C++ and compiled with
+a C++ compiler, Makefile changes were needed.  It proved easiest to use
+multiple Makefiles, abandoning the use of config, at least for now.
+You can still use ./configure <parameters> and make -j3 -C build, but we
+recommend doing as follows:
+To build the C++ AMP version, use
+  make -f Makefile.amp
+to make build/bin/hpgmg-fv-amp
+or, if you have the newer, Kalmar version of the compiler installed,
+  make -f Makefile.kalmar
+to make build/bin/hpgmg-fv-kalmar
+You can make build/bin/hpgmg-fv-omp (OpenMP version) using
+  make -f Makefile.omp
+or by using configure, but using Makefile.omp is more easily compatible with
+the other new Makefiles.
+
+Because our test runs showed a large portion of the execution time to be spent
+in smooth(), we decided to focus there.  We first concentrated on chebyshev.c
+and the 7pt operator.  With the release of new fv2 and fv4 operators by Sam
+Williams, we concentrated more on those operators and on gsrb.c. It is
+interesting that the lack of performance Sam has noted when using fv4 with the
+Chebyshev operator does not seem to occur in the AMP / Kalmar version.
+
+With this version of the code the Makefiles have changed somewhat, primarily
+in the change from STENCIL to OPERATOR and in the definition of VERSION.
+-DUSE_AMP is a general-purpose notification to the source.  -DAMP_DIM=n says
+that the n inner loops of smooth are being run with AMP.  -DAMP_TILE_DIM=m
+says that there are m AMP tiles.  When AMP_DIM is 4 and AMP_TILE_DIM is 3
+(the max allowed), the outermost two loops are linearized into one AMP tile.
+
+Not all combinations of VERSION, OPERATOR, SMOOTHER, etc. will work yet.
+In general, the results with -DAMP_DIM=3 -DAMP_TILE_DIM=3 have been as good
+as any. LOCAL (variables to copy to LDS) makes a surprisingly small difference.
+GSRB and CHEBY smoothers currently work with AMP / Kalmar; they support
+slightly different VERSIONs.  When using GSRB with AMP / Kalmar, GSRB_METHOD
+should be -DGSRB_BRANCH or -DGSRB_FP; STRIDE2 is not yet implemented.
+
+This port of hpgmg-fv is using the shared memory features of the HSA C++ AMP / Kalmar compiler.  Rather than using array() and array_view()
+to control copying data to and from the GPU, the data stay in shared memory.
+On the Kaveri processors on which this code was tested, shared memory is still
+somewhat slow, but we chose to use the shared memory approach as an indication
+of future HSA directions.  There is a rudimentary version of an array_view
+implementation in the source, but it is not tuned.
+
+This code has been tested using OpenMPI version 1.8.1, and the HSA C++ AMP compiler
+based on clang version 3.3, and the Kalmar 3.5 compiler.  Tests were run on
+single-processor (4 CPU core, 8 GPU compute core) Kaveri chips, using
+mpirun -np 2 build/bin/hpgmg-fv-amp 6 4,
+mpirun -np 4 build/bin/hpgmg-fv-amp 6 2,
+mpirun -np 3 build/bin/hpgmg-fv-amp 6 9,
+and similar tests to make sure that the code worked with MPI.
+
+Tests were also run using OpenMP as compiled by gcc; those were run without MPI,
+as were the majority of AMP / Kalmar benchmarks.  The current HSA stack does not
+benefit from running on multiple CPU cores, as there is only one GPU (with
+8 GPU computational cores) for four CPU cores. It has been suggested that the
+GPU could be partitioned to run OpenMP in conjunction with AMP / Kalmar, but
+that has not been implemented.
