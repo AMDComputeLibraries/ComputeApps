@@ -1,0 +1,35 @@
+To compile:
+---------------
+*	Type make in src-amp directory
+*	At present, makefile uses hard-coded paths to the CPP AMP compiler on the
+	development machine. Yours paths might be required to be adjusted
+*	Now a binary called CoMD-amp should be created in the ../bin directory
+
+To run:
+----------------
+*	../bin/CoMD-amp    -- for LJ
+*	../bin/CoMD-amp -e -- for EAM
+*	You can use -x NN -y NN -z NN options to specify problem set sizes in x,y,z direction
+
+Notes:
+----------------
+*   Kernels or Loops parallelized on the GPU: LJForce, EAM (3), AdvancePosition
+    and AdvanceVelocity.
+*	Kernels have been implemented with and without tiling. The tiling
+	implementation is always faster.
+*	With tiling, each i-th box works in one tile each with several threads.
+	Each thread in the tile works on each i-th atom. Number of threads in a
+	tile is equal to MAXATOMS. 
+*	It is important to mention that no data-copy is required with CPP AMP and 
+	host pointers are directly passed to the GPU without the need to create 
+	different data containers. This CoMD implementation is fully HSA ready.
+*	AdvanceVelocity and AdvancePosition kernels run slower with C++ AMP on the
+	GPU. The reason is very little compute in these kernels which does not
+	amortize the cost of memory accesses. Right now, these kernels are coded to
+	run on CPU. However, these can be made to run on the GPU with a change of 1
+	line, if desired.	
+
+*	For next steps, a strategy should be devised in which the GPU threads are
+	efficiently utilized. Right now, since each C++ AMP tile maps to one CoMD
+	box and contains 64 threads, there might be a case when threads are left
+	idle for boxes which contain < 64 threads.
