@@ -1,0 +1,98 @@
+=====================================================================
+NEW IN VERSION 10
+=====================================================================
+
+- Changed verification mode to be more portable. The verification
+strategy introduced in version 9 had discrepancies on different
+platforms and compilers. This was due to reliance on the compiler
+provided rand() function producing a different series of random
+numbers than other implementations. Also, there were some issues
+with the associativity of floating point arithmetic. These issues
+have now all been solved, and the verification hash is consistent
+across all tested platforms.
+
+- Revised "XL" size parameters, as well as adding in an "XXL" size
+option. The XL size now uses 120GB of XS data. The XXL mode uses
+252GN of XS data. More details are in the verification section of the
+readme. 
+
+=====================================================================
+NEW IN VERSION 9
+=====================================================================
+
+- Added in new code verification mode. This can be toggled on in
+the makefile. When code is compiled and run, a hash of the results
+will be generated which can then be compared to other versions and
+configurations of XSBench. See readme for more details.
+
+- Moved PAPI def to makefile. Makes it easier to toggle.
+
+- Added -l command line option to set the number of cross section
+lookups performed by XSBench.
+
+=====================================================================
+NEW IN VERSION 8
+=====================================================================
+
+- Simplified command line interface (CLI) read in process. XSBench
+now supports a more traditional CLI, as follows:
+
+Usage: ./XSBench <options>
+Options include:
+  -n <threads>     Number of OpenMP threads to run
+    -s <size>        Size of H-M Benchmark to run (small, large, XL)
+	  -g <gridpoints>  Number of gridpoints per isotope
+	  Default is equivalent to: -s large
+
+- Updated README with new CLI usage details.
+
+- Fixed several typos in the XSBench Theory PDF.
+
+=====================================================================
+NEW IN VERSION 7
+=====================================================================
+
+- Added MPI support. Multithreaded run executes on all ranks.
+  Problem size or data is not subdivided - the exact same problem
+  is solved in parallel by all ranks. Only MPI communication is
+  a single reduce at the end to aggregate timing data. 
+  
+  To enable MPi mode, simply change the MPI flag in the makefile
+  to "MPI = yes". Make sure mpicc is available on your system.
+
+- Added in "XL" size option for a giant 277 GB energy grid. This
+  is unlikely to fit on a single node, but is useful for
+  experimentation purposes.
+
+- Removed "BGQ mode" CLI argument option, as it wasn't being used
+  by anything in the code anymore.
+
+=====================================================================
+NEW IN VERSION 6
+=====================================================================
+
+- Fixed small bug in calculate_micro_xs() function. Occasionally,
+  the index returned would be the last nuclidegridpoint for that
+  nuclide, causing the "high" energy point to be off the end of the
+  grid (likely into the next nuclide's energy grid). Added a check
+  to correct for when this occurs.
+
+  Note that this bug did not affect performance - only made the
+  calculation of XS's more "correct".
+
+=====================================================================
+NEW IN VERSION 5
+=====================================================================
+
+- Added ChangeLog
+
+- Moved source code files to src/ directory.
+
+- Updated README.txt file to enhance documentation
+
+- Added significant documentation with regards to theory
+  in the docs/XSBench_Theory.pdf file. The README.txt file is now
+  more of a quick-start & users guide, whereas the XSBench_Theory.pdf
+  guide covers the details and theory behind the code.
+
+=====================================================================
