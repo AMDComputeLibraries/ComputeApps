@@ -18,12 +18,13 @@ CLANG             = $(CPPAMP_BUILD)/bin/clang++
 CLANGFLAGS = -I. -O3 -march=bdver2 -g\
            -DHAVE_AMP \
            -I$(CPPAMP_BUILD)/include \
+           -hc \
            -std=c++amp \
-           -I$(CPPAMP_BUILD)/include/c++/v1 \
+           -stdlib=libc++ \
            -Xclang \
            -fhsa-ext -DCXXAMP_ENABLE_HSA=1 \
            -I/usr/lib/openmpi/include
-CLANGLNKFLAGS = -std=c++amp -L$(CPPAMP_BUILD)/lib -Wl,--rpath=$(CPPAMP_BUILD)/lib -lc++ -lcxxrt -ldl -Wl,--whole-archive -lmcwamp -Wl,--no-whole-archive
+CLANGLNKFLAGS = -hc -std=c++amp -L$(CPPAMP_BUILD)/lib -Wl,--rpath=$(CPPAMP_BUILD)/lib -lc++ -lc++abi -ldl -Wl,--whole-archive -lmcwamp -Wl,--no-whole-archive
 MPILIBS = -L/usr/lib/openmpi/lib -lmpi
 LIBS+=$(MPILIBS)
 
