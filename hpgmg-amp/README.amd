@@ -1,14 +1,14 @@
-As C++ AMP / Kalmar needs its source to be written in C++ and compiled with
-a C++ compiler, Makefile changes were needed.  It proved easiest to use
+As HCC / C++ AMP / Kalmar needs its source to be written in C++ and compiled
+with a C++ compiler, Makefile changes were needed.  It proved easiest to use
 multiple Makefiles, abandoning the use of config, at least for now.
 You can still use ./configure <parameters> and make -j3 -C build, but we
 recommend doing as follows:
 To build the C++ AMP version, use
   make -f Makefile.amp
 to make build/bin/hpgmg-fv-amp
-or, if you have the newer, Kalmar version of the compiler installed,
-  make -f Makefile.kalmar
-to make build/bin/hpgmg-fv-kalmar
+or, if you have the newer, HCC version of the compiler installed,
+  make -f Makefile.hcc
+to make build/bin/hpgmg-fv-hcc
 You can make build/bin/hpgmg-fv-omp (OpenMP version) using
   make -f Makefile.omp
 or by using configure, but using Makefile.omp is more easily compatible with

@@ -1,9 +1,11 @@
-The source in this directory contains the C++ Kalmar version of LULESH 2.0. The code in this directory compiles and runs correctly using the 0.5 version of our C++ Kalmar compiler using either the 1.0p or 1.0f HSA stack. Significantly better performance is seen with 1.0p.  
+The source in this directory contains the AMD HCC version of LULESH 2.0. The code in this directory compiles and runs correctly using the 0.9 version of AMD's HCC compiler using either the 1.0p or 1.0f HSA stack. Significantly better performance is seen with 1.0p.  
 
 Building the code:
-  1) Make sure that the Kalmar compiler and associated tools are in the path. These usually exist in /opt/clamp/bin and /opt/amd/bin
+  1) Make sure that the Kalmar compiler and associated tools are in the path. These usually exist in /opt/hcc/bin and /opt/amd/bin
+     1a) This can also be done temporarily by running the 'make' command as 'PATH=/opt/hcc/bin:$(PATH) make', for instance
   2) Verify that LD_LIBARY_PATH includes the HSA libraries (/opt/hsa/lib)
-  3) use the Makefile (type "make" on the command line)
+  3) You may need to ensure that libcxxrt is installed. This can be found at https://github.com/pathscale/libcxxrt
+  4) use the Makefile (type "make" on the command line)
 
 Next Steps:
   There is an issue with the BLOCKSIZE define in the Makefile. The original OpenCL code used a value of 256. This corresponds to a Tahiti dGPU.
