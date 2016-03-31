@@ -51,7 +51,7 @@ endif
 
 # C++AMP clang Compiler
 ifeq ($(COMPILER),clang)
-  CLAMP_HOME = /opt/kalmar
+  CLAMP_HOME = /opt/hcc
   INCLUDES = -I.
 
   CC = $(CLAMP_HOME)/bin/clang

@@ -26,7 +26,7 @@ CC=$(CLAMP_HOME)/bin/clang++
 OPTFLAGS = -g -O3
 endif
 INCLUDES = -I. -I$(CLAMP_HOME)/include   
-CFLAGS     = -std=c++11 $(shell $(CLAMP_CONFIG) --build --cxxflags) -Xclang -fhsa-ext 
+CFLAGS     = -std=c++11 $(shell $(CLAMP_CONFIG) --cxxflags) -Xclang -fhsa-ext 
 #CFLAGS = -std=c++amp $(INCLUDES) -Xclang -fhsa-ext
 C_LIB = -lm
 

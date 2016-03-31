@@ -1,0 +1,157 @@
+# Makefile for AMD HCC and mpich version of HPGMG-FV
+# Supports a mix of c and cpp files
+
+OBJDIR = build/obj/finite-volume/source
+BINDIR = build/bin
+SRCDIR = finite-volume/source
+# OPERATOR can be 7pt, or 27pt for old stuff
+# of fv2 or fv4 for newer
+# fv2 is a 7pt order 2 stencil.
+OPERATOR=7pt
+
+# Default is 8 for these values, but 64 works better with GPU
+#BLOCKCOPY=-DBLOCKCOPY_TILE_K=64 -DBLOCKCOPY_TILE_J=64
+BLOCKCOPY=-DBLOCKCOPY_TILE_K=64 -DBLOCKCOPY_TILE_J=64
+
+#VERSION = -DUSE_AMP -DAMP_ARRAY_VIEW=3            for array_view 3D
+#VERSION = -DUSE_AMP -DAMP_DIM=4 -DAMP_TILE_DIM=0  for 3D plus outer loop, untiled
+#VERSION = -DUSE_AMP -DAMP_DIM=4 -DAMP_TILE_DIM=3  for 3D plus outer loop, 3D tiled
+#VERSION = -DUSE_AMP -DAMP_DIM=3 -DAMP_TILE_DIM=0  for 3D, untiled
+#VERSION = -DUSE_AMP -DAMP_DIM=3 -DAMP_TILE_DIM=3  for 3D, tiled
+#VERSION = -DAMP_NONE or blank for no AMP
+VERSION = -DUSE_AMP -DAMP_DIM=3 -DAMP_TILE_DIM=3
+#VERSION =
+
+# TILING = -DAMP_TILE_BLOCKS=1 -DAMP_TILE_K=2 -DAMP_TILE_J=2 -DAMP_TILE_I=16
+# It does no harm to set, e.g., AMP_TILE_BLOCKS when it's not used.
+# Note there's no point making AMP_TILE_K bigger than BLOCKCOPY_TILE_K
+# or DAMP_TILE_J bigger than BLOCKCOPY_TILE_J.
+# Remember that the product of tile sizes must be <= 1024.
+#TILING = -DAMP_TILE_K=32 -DAMP_TILE_J=32
+TILING = -DAMP_TILE_BLOCKS=1 -DAMP_TILE_K=2 -DAMP_TILE_J=4 -DAMP_TILE_I=32
+
+#THRESHOLD is used only by AMP_INNER.  It does no harm having it set for other versions.
+THRESHOLD = 262144
+
+# CONSTANT can be -DSTENCIL_CONSTANT_COEFFICIENT or blank
+#CONSTANT = -DSTENCIL_CONSTANT_COEFFICIENT
+CONSTANT =
+
+# LOCAL sets the variables for which to make tile_static copies on the GPU (LDS)
+# If VERSION is not AMP_TILE_STATIC, this is ignored.
+#LOCAL = -DUSElxn -DUSElbk -DUSElbj -DUSElbi -DUSElval
+# -DUSElval doesn't work for fv2 or fv4
+#  Use of LDS is currently only implemented for CHEBY smoother
+LOCAL = -DUSElxn
+
+# SOLVER can be BICGSTAB, CG, CABICGSTAT, or CACG.
+# So far only BICGSTAB has been tested
+SOLVER = BICGSTAB
+
+# SMOOTHER can be CHEBY or GSRB or JACOBI or L1JACOBI
+SMOOTHER = GSRB
+
+# GSRB_METHOD can be -DGSRB_FP
+# or -DGSRB_STRIDE2 (currently not implemented for AMP)
+# or -DGSRB_BRANCH
+# or blank.
+# No effect for SMOOTHER!=GSRB.
+# Can add -DGSRB_OOP for out of place
+GSRB_METHOD = -DGSRB_BRANCH
+
+# FUSE can be -DSTENCIL_FUSE_BC, -DSTENCIL_FUSE_DINV, both, or blank
+# Best single-processor performance is blank
+#FUSE = -DSTENCIL_FUSE_BC -DSTENCIL_FUSE_DINV
+FUSE =
+
+# BC can be -DUSE_PERIODIC_BC or blank
+# 13-point requires -DUSE_PERIODIC_BC, 27-point recommends it.
+BC=
+
+# PROBLEM can be -DUSE_HELMHOLTZ or blank (Poisson)
+PROBLEM =
+
+# VCYCLES can be V, or U.  V is suggested
+VCYCLES = V
+
+# FCYCLES can be -DUSE_FCYCLES=1 or blank (to use just U or V cycles)
+FCYCLES = -DUSE_FCYCLES=1
+
+HCC_HOME = /opt/hcc
+CLAMP_CONFIG = $(HCC_HOME)/bin/clamp-config
+
+#MPI_INCLUDE = /usr/include/mpich
+#MPI_LIB_DIR = /usr/lib/mpich
+MPI_INCLUDE = /usr/include/openmpi
+MPI_LIB_DIR = /usr/lib/openmpi
+
+#INCLUDES = -I. -I$(HCC_HOME)/include -I$(HCC_HOME)/include/c++/v1 \
+           -I$(MPI_INCLUDE) -I$(HCC_HOME)/lib/clang/3.5.0/include -I/usr/include
+INCLUDES = -I. -I$(MPI_INCLUDE) -I$(HCC_HOME)/include
+
+CC          = $(HCC_HOME)/bin/clang++
+
+CC_CPPFLAGS = $(shell $(CLAMP_CONFIG) --install --cxxflags)
+CC_CPPFLAGS += -std=c++amp -DUSE_MPI=1 -DUSE_SUBCOMM=1 $(FUSE) $(BC)
+CC_CPPFLAGS += -DUSE_$(VCYCLES)CYCLES=1 -DUSE_$(SMOOTHER)=1 $(PROBLEM)
+CC_CPPFLAGS += $(FCYCLES)
+CC_CPPFLAGS += $(VERSION)
+CC_CPPFLAGS += -DUSE_$(SOLVER)=1
+CC_CPPFLAGS += $(GSRB_METHOD)
+CC_CPPFLAGS += $(TILING)
+CC_CPPFLAGS += -DOPERATOR_$(OPERATOR)
+CC_CPPFLAGS += -DAMP_INNER_THRESHOLD=$(THRESHOLD)
+CC_CPPFLAGS += $(BLOCKCOPY)
+CC_CPPFLAGS += $(LOCAL)
+CC_CPPFLAGS += $(CONSTANT)
+#CC_CPPFLAGS += -DDUMP_ITERATION_COUNT
+#CC_CPPFLAGS += -DDUMP_BLOCK_SIZES
+
+#CC_FLAGS    = -Xclang -fhsa-ext -O3
+CC_FLAGS    = -Xclang -fhsa-ext -O3 -march=bdver2 -mavx -ffast-math
+
+LD      = $(HCC_HOME)/bin/clang++
+LDFLAGS = -g -L$(MPI_LIB_DIR) $(shell $(CLAMP_CONFIG) --install --ldflags)
+
+LDLIBS = -lmpi
+
+EXEC = hpgmg-fv-hcc
+
+OBJS = $(OBJDIR)/hpgmg-fv.o \
+       $(OBJDIR)/level.o \
+       $(OBJDIR)/mg.o \
+       $(OBJDIR)/operators.$(OPERATOR).o \
+       $(OBJDIR)/solvers.o \
+       $(OBJDIR)/timers.o
+
+$(BINDIR)/$(EXEC): bindir_exist objdir_exist $(OBJS)
+	$(LD) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
+
+$(OBJDIR)/hpgmg-fv.o: $(SRCDIR)/hpgmg-fv.c $(SRCDIR)/*.h Makefile.hcc
+	$(CC) $(CC_CPPFLAGS) $(INCLUDES) $(CC_FLAGS) -c $< -o $@
+
+$(OBJDIR)/level.o: $(SRCDIR)/level.c $(SRCDIR)/*.h
+	$(CC) $(CC_CPPFLAGS) $(INCLUDES) $(CC_FLAGS) -c $< -o $@
+
+$(OBJDIR)/mg.o: $(SRCDIR)/mg.c $(SRCDIR)/*.h
+	$(CC) $(CC_CPPFLAGS) $(INCLUDES) $(CC_FLAGS) -c $< -o $@
+
+$(OBJDIR)/operators.$(OPERATOR).o: $(SRCDIR)/operators.$(OPERATOR).c Makefile.amp $(SRCDIR)/*.h $(SRCDIR)/operators/*.c
+	$(CC) $(CC_CPPFLAGS) $(INCLUDES) $(CC_FLAGS) -c $< -o $@
+
+$(OBJDIR)/solvers.o: $(SRCDIR)/solvers.c $(SRCDIR)/*.h $(SRCDIR)/solvers/*.c
+	$(CC) $(CC_CPPFLAGS) $(INCLUDES) $(CC_FLAGS) -c $< -o $@
+
+$(OBJDIR)/timers.o: $(SRCDIR)/timers.c $(SRCDIR)/timers.h $(SRCDIR)/timers/*.c
+	$(CC) $(CC_CPPFLAGS) $(INCLUDES) $(CC_FLAGS) -c $< -o $@
+
+.PHONY=clean objdir_exist bindir_exist
+clean:
+	rm $(OBJDIR)/*.o $(BINDIR)/hpgmg-fv-hcc
+
+objdir_exist:
+	mkdir -p $(OBJDIR)
+
+bindir_exist:
+	mkdir -p $(BINDIR)
+
