@@ -1,25 +1,37 @@
 SHELL = /bin/sh
 
-CXX = clang++
+#Array_view mode
+HCC_ARR_VIEW = ON
+
+# HSA Machine
+#HCC_PATH=/opt/rocm/hcc-hsail
+
+# dGPU Machine
+HCC_PATH=/opt/rocm/hcc-lc
+
+HCC_CONFIG=$(HCC_PATH)/bin/hcc-config
+CXX = $(HCC_PATH)/bin/hcc
 
 LULESH_EXEC = lulesh
 
 INCLUDE_PATH=
 LIB_PATH=
 
-CXXFLAGS = `clamp-config --install --cxxflags` -g -Xclang -fhsa-ext -DBLOCKSIZE=128 
-LDFLAGS = `clamp-config --install --ldflags` -lm
-OPTS = -O3
+CXXFLAGS = $(shell $(HCC_CONFIG) --install --cxxflags) -DBLOCKSIZE=256
+LDFLAGS = $(shell $(HCC_CONFIG) --install --ldflags) -lm
 
-ifeq "$(TIMING)" "TRUE"
-	CXXFLAGS += -DKERNELS_TIMING
+ifeq ($(HCC_ARR_VIEW), ON)
+  CXXFLAGS += -DARRAY_VIEW
 endif
+
+
+OPTS = -O3
 
 SOURCES = \
 	lulesh.cc \
 	lulesh-util.cc \
-	lulesh-init.cc \
-	lulesh_kernels.cc
+	lulesh-init.cc
+
 OBJECTS = $(SOURCES:%.cc=objs/%.o)
 
 .SUFFIXES: .cc .o

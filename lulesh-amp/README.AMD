@@ -1,18 +1,21 @@
-The source in this directory contains the AMD HCC version of LULESH 2.0. The code in this directory compiles and runs correctly using the 0.9 version of AMD's HCC compiler using either the 1.0p or 1.0f HSA stack. Significantly better performance is seen with 1.0p.  
+The source in this directory contains the C++ HCC version of LULESH 2.0. 
+
+The original starting point for this HCC code is from the LLNL web page: 
+https://codesign.llnl.gov/lulesh/lulesh2.0.3.tgz
+
+The code in this directory compiles and runs correctly using the 
+HCC 0.10.16313-d90738a-10704f4 version of our C++ RoCM HCC compiler using the 
+2.0 ROCm HSA stack. 
+
+Changes made to the code include updating for Array vs ArrayView operation,
+and support for discrete GPUs using the hcc-lc backend.
 
 Building the code:
-  1) Make sure that the Kalmar compiler and associated tools are in the path. These usually exist in /opt/hcc/bin and /opt/amd/bin
-     1a) This can also be done temporarily by running the 'make' command as 'PATH=/opt/hcc/bin:$(PATH) make', for instance
+  1) Make sure that the HCC compiler and associated tools are in the path. 
   2) Verify that LD_LIBARY_PATH includes the HSA libraries (/opt/hsa/lib)
-  3) You may need to ensure that libcxxrt is installed. This can be found at https://github.com/pathscale/libcxxrt
-  4) use the Makefile (type "make" on the command line)
+  3) use the Makefile (type "make" on the command line)
 
-Next Steps:
-  There is an issue with the BLOCKSIZE define in the Makefile. The original OpenCL code used a value of 256. This corresponds to a Tahiti dGPU.
-  However, this does not work with the 0.5 compiler on a Kaveri. LDS in OpenCL corresponds to tiled_static memory in Kalmar. How this handles
-  code that requests more memory than the hardware provides is unclear (and problematic). Kaveri works with BLOCKSIZE=128. 
   
-  This code is written using the APU (pointer) syntax. To run this code on a dGPU will require a code change to use array_view. 
   
   
 

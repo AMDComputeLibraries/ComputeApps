@@ -1,5 +1,5 @@
 /*******************************************************************************
-Copyright (c) 2015 Advanced Micro Devices, Inc. 
+Copyright (c) 2016 Advanced Micro Devices, Inc.
 
 All rights reserved.
 
@@ -9,8 +9,8 @@ are permitted provided that the following conditions are met:
 1. Redistributions of source code must retain the above copyright notice, this
 list of conditions and the following disclaimer.
 
-2. Redistributions in binary form must reproduce the above copyright notice, 
-this list of conditions and the following disclaimer in the documentation 
+2. Redistributions in binary form must reproduce the above copyright notice,
+this list of conditions and the following disclaimer in the documentation
 and/or other materials provided with the distribution.
 
 3. Neither the name of the copyright holder nor the names of its contributors
@@ -28,15 +28,31 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 *******************************************************************************/
+
 #include <math.h>
 #include <vector>
 #include <iostream>
 #include <fstream>
 
+#include <hc.hpp>
+using namespace hc;
+
 #ifndef __LULESH_H__
 #define __LULESH_H__
 
 //#include "CLsetup.hpp"
+
+#ifdef ARRAY_VIEW
+#define HCC_ARRAY_STRUC(type, name, size, ptr) array_view<type> name(size, ptr)
+#define HCC_ARRAY_OBJECT(type, name) array_view<type> &name
+#define HCC_ID(name)
+#define HCC_SYNC(name, ptr) name.synchronize()
+#else
+#define HCC_ARRAY_STRUC(type, name, size, ptr) array<type> name(size); copy(ptr, name)
+#define HCC_ARRAY_OBJECT(type, name) array<type> &name
+#define HCC_ID(name) ,&name
+#define HCC_SYNC(name, ptr) copy(name, ptr)
+#endif
 
 //**************************************************
 // Allow flexibility for arithmetic representations 
@@ -52,7 +68,7 @@ typedef long double  real10 ;  // 10 bytes on x86
 
 typedef int    Index_t ; // array subscript and loop index
 #ifdef SINGLE
-typedef real4  Real_t ;  // floating point representation
+typedef real4 Real_t ;  // floating point representation
 #else
 typedef real8  Real_t ;  // floating point representation
 #endif
@@ -243,6 +259,42 @@ class Domain {
       m_vnew.resize(size) ;
    }
 
+   /* Temporaries moved from subroutines to avoid allocation overhead */
+   void AllocateRoutinePersistent(Int_t numElem, Int_t numNode) 
+   {
+      dev_mindthydro.resize(numElem/BLOCKSIZE) ;
+      dev_mindtcourant.resize(numElem/BLOCKSIZE) ;
+      p_vnewc.resize(numElem) ;
+      p_e_old.resize(numElem) ;
+      p_delvc.resize(numElem) ;
+      p_p_old.resize(numElem) ;
+      p_q_old.resize(numElem) ;
+      p_compression.resize(numElem) ;
+      p_compHalfStep.resize(numElem) ;
+      p_qq_old.resize(numElem) ;
+      p_ql_old.resize(numElem) ;
+      p_work.resize(numElem) ;
+      p_p_new.resize(numElem) ;
+      p_e_new.resize(numElem) ;
+      p_q_new.resize(numElem) ;
+      p_bvc.resize(numElem) ;
+      p_pbvc.resize(numElem) ;
+      p_dvdx.resize(numElem*8) ;
+      p_dvdy.resize(numElem*8) ;
+      p_dvdz.resize(numElem*8) ;
+      p_x8n.resize(numElem*8) ;
+      p_y8n.resize(numElem*8) ;
+      p_z8n.resize(numElem*8) ;
+      p_sigxx.resize(numElem) ;
+      p_sigyy.resize(numElem) ;
+      p_sigzz.resize(numElem) ;
+      p_determ.resize(numElem) ;
+      p_fx_elem.resize(numElem*8) ;
+      p_fy_elem.resize(numElem*8) ;
+      p_fz_elem.resize(numElem*8) ;
+      ppHalfStep.resize(numElem) ;
+   }
+
    void DeallocateGradients()
    {
       m_delx_zeta.clear() ;
@@ -291,6 +343,39 @@ class Domain {
    //
    // ACCESSORS
    //
+
+   // Routine temporaries
+   Real_t& mindthydro(Index_t idx)    { return dev_mindthydro[idx] ; }
+   Real_t& mindtcourant(Index_t idx)  { return dev_mindtcourant[idx] ; }
+   Real_t& vnewc(Index_t idx)         { return p_vnewc[idx] ; }
+   Real_t& e_old(Index_t idx)         { return p_e_old[idx] ; }
+   Real_t& delvc(Index_t idx)         { return p_delvc[idx] ; }
+   Real_t& p_old(Index_t idx)         { return p_p_old[idx] ; }
+   Real_t& q_old(Index_t idx)         { return p_q_old[idx] ; }
+   Real_t& compression(Index_t idx)   { return p_compression[idx] ; }
+   Real_t& compHalfStep(Index_t idx)  { return p_compHalfStep[idx] ; }
+   Real_t& qq_old(Index_t idx)        { return p_qq_old[idx] ; }
+   Real_t& ql_old(Index_t idx)        { return p_ql_old[idx] ; }
+   Real_t& work(Index_t idx)          { return p_work[idx] ; }
+   Real_t& p_new(Index_t idx)         { return p_p_new[idx] ; }
+   Real_t& q_new(Index_t idx)         { return p_q_new[idx] ; }
+   Real_t& e_new(Index_t idx)         { return p_e_new[idx] ; }
+   Real_t& bvc(Index_t idx)           { return p_bvc[idx] ; }
+   Real_t& pbvc(Index_t idx)          { return p_pbvc[idx] ; }
+   Real_t& pHalfStep(Index_t idx)     { return ppHalfStep[idx] ; }
+   Real_t& dvdx(Index_t idx)           { return p_dvdx[idx] ; }
+   Real_t& dvdy(Index_t idx)           { return p_dvdy[idx] ; }
+   Real_t& dvdz(Index_t idx)           { return p_dvdz[idx] ; }
+   Real_t& x8n(Index_t idx)           { return p_x8n[idx] ; }
+   Real_t& y8n(Index_t idx)           { return p_y8n[idx] ; }
+   Real_t& z8n(Index_t idx)           { return p_z8n[idx] ; }
+   Real_t& sigxx(Index_t idx)         { return p_sigxx[idx] ; }
+   Real_t& sigyy(Index_t idx)         { return p_sigyy[idx] ; }
+   Real_t& sigzz(Index_t idx)         { return p_sigzz[idx] ; }
+   Real_t& determ(Index_t idx)        { return p_determ[idx] ; }
+   Real_t& fx_elem(Index_t idx)        { return p_fx_elem[idx] ; }
+   Real_t& fy_elem(Index_t idx)        { return p_fy_elem[idx] ; }
+   Real_t& fz_elem(Index_t idx)        { return p_fz_elem[idx] ; }
 
    // Node-centered
 
@@ -569,6 +654,40 @@ class Domain {
 
    std::vector<Real_t> m_elemMass ;  /* mass */
 
+   // work arrays from all routines moved here to eliminate per routine
+   // std::vector and array|array_view allocations
+   std::vector<Real_t> dev_mindthydro;
+   std::vector<Real_t> dev_mindtcourant;
+   std::vector<Real_t> p_vnewc;
+   std::vector<Real_t> p_e_old;
+   std::vector<Real_t> p_delvc;
+   std::vector<Real_t> p_q_old;
+   std::vector<Real_t> p_p_old;
+   std::vector<Real_t> p_compression;
+   std::vector<Real_t> p_compHalfStep;
+   std::vector<Real_t> p_qq_old;
+   std::vector<Real_t> p_ql_old;
+   std::vector<Real_t> p_work;
+   std::vector<Real_t> p_p_new;
+   std::vector<Real_t> p_e_new;
+   std::vector<Real_t> p_q_new;
+   std::vector<Real_t> p_bvc;
+   std::vector<Real_t> p_pbvc;
+   std::vector<Real_t> ppHalfStep;
+   std::vector<Real_t> p_dvdx;
+   std::vector<Real_t> p_dvdy;
+   std::vector<Real_t> p_dvdz;
+   std::vector<Real_t> p_x8n;
+   std::vector<Real_t> p_y8n;
+   std::vector<Real_t> p_z8n;
+   std::vector<Real_t> p_sigxx;
+   std::vector<Real_t> p_sigyy;
+   std::vector<Real_t> p_sigzz;
+   std::vector<Real_t> p_determ;
+   std::vector<Real_t> p_fx_elem;
+   std::vector<Real_t> p_fy_elem;
+   std::vector<Real_t> p_fz_elem;
+
    // Cutoffs (treat as constants)
    const Real_t  m_e_cut ;             // energy tolerance 
    const Real_t  m_p_cut ;             // pressure tolerance 
@@ -643,166 +762,245 @@ class Domain {
 
 #define MINEQ(a,b) (a)=(((a)<(b))?(a):(b))
 
-// the following is not needed for an HSA target
-#if 0 
-#define GPU_STALE 0
-#define CPU_STALE 1
-#define ALL_FRESH 2
 
-template<typename T>
-void freshenGPU(std::vector<T>& cpu,cl_mem* gpu,int& stale) {
-    if (stale!=GPU_STALE) return;
-    *gpu = clCreateBuffer(
-            CLsetup::context,                           //cl_context context
-            CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,   //cl_mem_flags flags
-            sizeof(T)*cpu.size(),                       //size_t size
-            &cpu[0],                                    //void *host_ptr
-            &CLsetup::err);                             //cl_int *errcode_ret
-    CLsetup::checkErr(CLsetup::err, "gpu buffer could not be allocated!");
-
-    CLsetup::err = clEnqueueWriteBuffer(
-            CLsetup::queue,             //cl_command_queue command_queue
-            *gpu,                       //cl_mem buffer
-            CL_FALSE,                    //cl_bool blocking_write
-            0,                          //size_t offset
-            sizeof(T)*cpu.size(),       //size_t size
-            &cpu[0],                    //const void *ptr
-            0,                          //cl_uint num_events_in_wait_list
-            NULL,                       //const cl_event *event_wait_list
-            NULL);                      //cl_event *event
-    CLsetup::checkErr(CLsetup::err, "Command Queue::enqueueWriteBuffer() - gpu");
-    stale=ALL_FRESH;
-    clFlush(CLsetup::queue);
-}
-
-template<typename T>
-void freshenCPU(std::vector<T>& cpu,cl_mem gpu) {
-    CLsetup::err = clEnqueueReadBuffer(CLsetup::queue,
-            gpu,
-            CL_FALSE,
-            0,
-            sizeof(T)*cpu.size(),
-            &cpu[0],
-            0,
-            NULL,
-            NULL);
-    CLsetup::checkErr(CLsetup::err, "Command Queue::enqueueReadBuffer() - gpu");
-    clFlush(CLsetup::queue);
-}
-
-// freshen helpers
-#define FC(var) freshenCPU(mesh.m_ ## var , meshGPU.m_ ## var ,meshGPU.m_ ## var ## _stale ); // freshen CPU
-#define FG(var) freshenGPU(mesh.m_ ## var , &meshGPU.m_ ## var ,meshGPU.m_ ## var ## _stale ); // freshen GPU
-// stale helpers
-#define SC(var) meshGPU.m_ ## var ## _stale = CPU_STALE; // stale CPU
-#define SG(var) meshGPU.m_ ## var ## _stale = GPU_STALE; // stale GPU
-
-#endif
-
-// we do not need this anymore. However, we will keep it to show the link
-// between OpenCL and C++ Kalmar
+// Modified to pass ARRAY_OBJECT references
+// this simplifies the call list for all of the subroutines
 struct MeshGPU {
-    Domain *m_mesh;
-    
-    MeshGPU(Domain *d) :  m_mesh(d),
-    				      m_x(d->m_x.data()), m_y(d->m_y.data()), m_z(d->m_z.data()),
-    					 m_xd(d->m_xd.data()), m_yd(d->m_yd.data()), m_zd(d->m_zd.data()),
-    					 m_xdd(d->m_xdd.data()), m_ydd(d->m_ydd.data()), m_zdd(d->m_zdd.data()),
-    					 m_fx(d->m_fx.data()), m_fy(d->m_fy.data()), m_fz(d->m_fz.data()),
-    					 m_nodalMass(d->m_nodalMass.data()), 
-    					 m_symmX(d->m_symmX.data()), m_symmY(d->m_symmY.data()), m_symmZ(d->m_symmZ.data()),
-    					 m_nodeElemCount(d->m_nodeElemCount.data()), m_nodeElemCornerList(d->m_nodeElemCornerList.data()),
-    					 m_matElemlist(d->m_matElemlist.data()), m_nodelist(d->m_nodelist.data()),
-    					 m_lxim(d->m_lxim.data()), m_lxip(d->m_lxip.data()), m_letam(d->m_letam.data()),
-    					 m_lzetam(d->m_lzetam.data()), m_lzetap(d->m_lzetap.data()),
-    				      m_elemBC(d->m_elemBC.data()), 
-    					 m_dxx(d->m_dxx.data()), m_dyy(d->m_dyy.data()), m_dzz(d->m_dzz.data()),
-    					 m_delv_xi(d->m_delv_xi.data()), m_delv_eta(d->m_delv_eta.data()), m_delv_zeta(d->m_delv_zeta.data()),
-    					 m_delx_xi(d->m_delx_xi.data()), m_delx_eta(d->m_delx_eta.data()), m_delx_zeta(d->m_delx_zeta.data()),
-    					 m_e(d->m_e.data()), m_p(d->m_p.data()), m_q(d->m_q.data()), m_ql(d->m_ql.data()), m_qq(d->m_qq.data()),
-    					 m_v(d->m_v.data()), m_volo(d->m_volo.data()), m_vnew(d->m_vnew.data()),
-    					 m_delv(d->m_delv.data()), m_vdov(d->m_vdov.data()), 
-    					 m_arealg(d->m_arealg.data()), m_ss(d->m_ss.data()), m_elemMass(d->m_elemMass.data())
-    					 {
-    						 std::cout << "Initialization of GPU complete" << std::endl;
-    			           }
+
+    MeshGPU(
+HCC_ARRAY_OBJECT(Index_t, matElemlist),
+HCC_ARRAY_OBJECT(Real_t, ss),
+HCC_ARRAY_OBJECT(Real_t, arealg),
+HCC_ARRAY_OBJECT(Real_t, vdov),
+HCC_ARRAY_OBJECT(Index_t, nodelist),
+HCC_ARRAY_OBJECT(Real_t, x),
+HCC_ARRAY_OBJECT(Real_t, y),
+HCC_ARRAY_OBJECT(Real_t, z),
+HCC_ARRAY_OBJECT(Real_t, xd),
+HCC_ARRAY_OBJECT(Real_t, yd),
+HCC_ARRAY_OBJECT(Real_t, zd),
+HCC_ARRAY_OBJECT(Real_t, fx),
+HCC_ARRAY_OBJECT(Real_t, fy),
+HCC_ARRAY_OBJECT(Real_t, fz),
+HCC_ARRAY_OBJECT(Real_t, elemMass),
+HCC_ARRAY_OBJECT(Int_t, nodeElemCount),
+HCC_ARRAY_OBJECT(Index_t, nodeElemCornerList),
+HCC_ARRAY_OBJECT(Real_t, v),
+HCC_ARRAY_OBJECT(Real_t, volo),
+HCC_ARRAY_OBJECT(Real_t, vnew),
+HCC_ARRAY_OBJECT(Real_t, vnewc),
+HCC_ARRAY_OBJECT(Real_t, xdd),
+HCC_ARRAY_OBJECT(Real_t, ydd),
+HCC_ARRAY_OBJECT(Real_t, zdd),
+HCC_ARRAY_OBJECT(Real_t, nodalMass),
+HCC_ARRAY_OBJECT(Index_t, symmX),
+HCC_ARRAY_OBJECT(Index_t, symmY),
+HCC_ARRAY_OBJECT(Index_t, symmZ),
+HCC_ARRAY_OBJECT(Real_t, delv),
+HCC_ARRAY_OBJECT(Real_t, dxx),
+HCC_ARRAY_OBJECT(Real_t, dyy),
+HCC_ARRAY_OBJECT(Real_t, dzz),
+
+HCC_ARRAY_OBJECT(Real_t, delx_zeta),
+HCC_ARRAY_OBJECT(Real_t, delv_zeta),
+HCC_ARRAY_OBJECT(Real_t, delx_xi),
+HCC_ARRAY_OBJECT(Real_t, delv_xi),
+HCC_ARRAY_OBJECT(Real_t, delx_eta),
+HCC_ARRAY_OBJECT(Real_t, delv_eta),
+HCC_ARRAY_OBJECT(Index_t, elemBC),
+HCC_ARRAY_OBJECT(Index_t, lxim),
+HCC_ARRAY_OBJECT(Index_t, lxip),
+HCC_ARRAY_OBJECT(Index_t, letam),
+HCC_ARRAY_OBJECT(Index_t, letap),
+HCC_ARRAY_OBJECT(Index_t, lzetam),
+HCC_ARRAY_OBJECT(Index_t, lzetap),
+
+HCC_ARRAY_OBJECT(Real_t, qq),
+HCC_ARRAY_OBJECT(Real_t, ql),
+HCC_ARRAY_OBJECT(Real_t, e),
+HCC_ARRAY_OBJECT(Real_t, p),
+HCC_ARRAY_OBJECT(Real_t, q),
+HCC_ARRAY_OBJECT(Real_t, e_old),
+HCC_ARRAY_OBJECT(Real_t, p_old),
+HCC_ARRAY_OBJECT(Real_t, q_old),
+HCC_ARRAY_OBJECT(Real_t, delvc),
+HCC_ARRAY_OBJECT(Real_t, compression),
+HCC_ARRAY_OBJECT(Real_t, compHalfStep),
+HCC_ARRAY_OBJECT(Real_t, qq_old),
+HCC_ARRAY_OBJECT(Real_t, ql_old),
+HCC_ARRAY_OBJECT(Real_t, work),
+HCC_ARRAY_OBJECT(Real_t, p_new),
+HCC_ARRAY_OBJECT(Real_t, e_new),
+HCC_ARRAY_OBJECT(Real_t, q_new),
+HCC_ARRAY_OBJECT(Real_t, bvc),
+HCC_ARRAY_OBJECT(Real_t, pbvc),
+HCC_ARRAY_OBJECT(Real_t, pHalfStep),
+HCC_ARRAY_OBJECT(Real_t, sigxx),
+HCC_ARRAY_OBJECT(Real_t, sigyy),
+HCC_ARRAY_OBJECT(Real_t, sigzz),
+HCC_ARRAY_OBJECT(Real_t, determ),
+HCC_ARRAY_OBJECT(Real_t, dvdx),
+HCC_ARRAY_OBJECT(Real_t, dvdy),
+HCC_ARRAY_OBJECT(Real_t, dvdz),
+HCC_ARRAY_OBJECT(Real_t, x8n),
+HCC_ARRAY_OBJECT(Real_t, y8n),
+HCC_ARRAY_OBJECT(Real_t, z8n),
+HCC_ARRAY_OBJECT(Real_t, fx_elem),
+HCC_ARRAY_OBJECT(Real_t, fy_elem),
+HCC_ARRAY_OBJECT(Real_t, fz_elem),
+HCC_ARRAY_OBJECT(Real_t, mindthydro),
+HCC_ARRAY_OBJECT(Real_t, mindtcourant)
+    ) :  matElemlist(matElemlist),
+    ss(ss), arealg(arealg), vdov(vdov),
+    nodelist(nodelist),
+    x(x), y(y), z(z),
+    xd(xd), yd(yd), zd(zd),
+    fx(fx), fy(fy), fz(fz),
+    elemMass(elemMass),
+    nodeElemCount(nodeElemCount), nodeElemCornerList(nodeElemCornerList),
+    v(v), volo(volo), vnew(vnew), vnewc(vnewc),
+    xdd(xdd), ydd(ydd), zdd(zdd),
+    nodalMass(nodalMass),
+    symmX(symmX), symmY(symmY), symmZ(symmZ),
+    delv(delv),
+    dxx(dxx), dyy(dyy), dzz(dzz), 
+    delx_zeta(delx_zeta), delv_zeta(delv_zeta),
+    delx_xi(delx_xi), delv_xi(delv_xi),
+    delx_eta(delx_eta), delv_eta(delv_eta),
+
+    elemBC(elemBC),
+    lxim(lxim),
+    lxip(lxip),
+    letam(letam),
+    letap(letap),
+    lzetam(lzetam),
+    lzetap(lzetap),
+    qq(qq),
+    ql(ql),
+    e(e),
+    p(p),
+    q(q),
+    e_old(e_old),
+    p_old(p_old),
+    q_old(q_old),
+    delvc(delvc),
+    compression(compression),
+    compHalfStep(compHalfStep),
+    qq_old(qq_old),
+    ql_old(ql_old),
+    work(work),
+    p_new(p_new),
+    e_new(e_new),
+    q_new(q_new),
+    bvc(bvc),
+    pbvc(pbvc),
+    pHalfStep(pHalfStep),
+    sigxx(sigxx),
+    sigyy(sigyy),
+    sigzz(sigzz),
+
+    determ(determ),
+    dvdx(dvdx),
+    dvdy(dvdy),
+    dvdz(dvdz),
+    x8n(x8n),
+    y8n(y8n),
+    z8n(z8n),
+    fx_elem(fx_elem),
+    fy_elem(fy_elem),
+    fz_elem(fz_elem),
+    mindthydro(mindthydro),
+    mindtcourant(mindtcourant)
+  {
+    std::cout << "New Initialization of GPU complete" << std::endl;
+  }
     
    /******************/
    /* Implementation */
    /******************/
 
-   /* Node-centered */
+HCC_ARRAY_OBJECT(Index_t, matElemlist);
+HCC_ARRAY_OBJECT(Real_t, ss);
+HCC_ARRAY_OBJECT(Real_t, arealg);
+HCC_ARRAY_OBJECT(Real_t, vdov);
+HCC_ARRAY_OBJECT(Index_t, nodelist);
+HCC_ARRAY_OBJECT(Real_t, x);
+HCC_ARRAY_OBJECT(Real_t, y);
+HCC_ARRAY_OBJECT(Real_t, z);
+HCC_ARRAY_OBJECT(Real_t, xd);
+HCC_ARRAY_OBJECT(Real_t, yd);
+HCC_ARRAY_OBJECT(Real_t, zd);
+HCC_ARRAY_OBJECT(Real_t, fx);
+HCC_ARRAY_OBJECT(Real_t, fy);
+HCC_ARRAY_OBJECT(Real_t, fz);
 
-   Real_t   *m_x ;  /* coordinates */
-   Real_t   *m_y ;
-   Real_t   *m_z ;
+HCC_ARRAY_OBJECT(Real_t, elemMass);
+HCC_ARRAY_OBJECT(Int_t, nodeElemCount);
+HCC_ARRAY_OBJECT(Index_t, nodeElemCornerList);
+HCC_ARRAY_OBJECT(Real_t, v);
+HCC_ARRAY_OBJECT(Real_t, volo);
+HCC_ARRAY_OBJECT(Real_t, vnew);
+HCC_ARRAY_OBJECT(Real_t, vnewc);
+HCC_ARRAY_OBJECT(Real_t, xdd);
+HCC_ARRAY_OBJECT(Real_t, ydd);
+HCC_ARRAY_OBJECT(Real_t, zdd);
+HCC_ARRAY_OBJECT(Real_t, nodalMass);
+HCC_ARRAY_OBJECT(Index_t, symmX);
+HCC_ARRAY_OBJECT(Index_t, symmY);
+HCC_ARRAY_OBJECT(Index_t, symmZ);
+HCC_ARRAY_OBJECT(Real_t, delv);
+HCC_ARRAY_OBJECT(Real_t, dxx);
+HCC_ARRAY_OBJECT(Real_t, dyy);
+HCC_ARRAY_OBJECT(Real_t, dzz);
 
-   Real_t   *m_xd ; /* velocities */
-   Real_t   *m_yd ;
-   Real_t   *m_zd ;
-
-   Real_t   *m_xdd ; /* accelerations */
-   Real_t   *m_ydd ;
-   Real_t   *m_zdd ;
-
-   Real_t   *m_fx ;  /* forces */
-   Real_t   *m_fy ;
-   Real_t   *m_fz ;
-
-   Real_t   *m_nodalMass ;  /* mass */
-
-   Index_t  *m_symmX ;  /* symmetry plane nodesets */
-   Index_t  *m_symmY ;
-   Index_t  *m_symmZ ;
-    
-   Int_t    *m_nodeElemCount ;
-   Index_t  *m_nodeElemCornerList ;
-    
-   /* Element-centered */
-
-   Index_t  *m_matElemlist ;  /* material indexset */
-   Index_t  *m_nodelist ;     /* elemToNode connectivity */
-
-   Index_t  *m_lxim ;  /* element connectivity across each face */
-   Index_t  *m_lxip ;
-   Index_t  *m_letam ;
-   Index_t  *m_letap ;
-   Index_t  *m_lzetam ;
-   Index_t  *m_lzetap ;
-
-   Int_t    *m_elemBC ;  /* symmetry/free-surface flags for each elem face */
-
-   Real_t   *m_dxx ;  /* principal strains -- temporary */
-   Real_t   *m_dyy ;
-   Real_t   *m_dzz ;
-
-   Real_t   *m_delv_xi ;    /* velocity gradient -- temporary */
-   Real_t   *m_delv_eta ;
-   Real_t   *m_delv_zeta ;
-
-   Real_t   *m_delx_xi ;    /* coordinate gradient -- temporary */
-   Real_t   *m_delx_eta ;
-   Real_t   *m_delx_zeta ;
-   
-   Real_t   *m_e ;   /* energy */
-
-   Real_t   *m_p ;   /* pressure */
-   Real_t   *m_q ;   /* q */
-   Real_t   *m_ql ;  /* linear term for q */
-   Real_t   *m_qq ;  /* quadratic term for q */
-
-   Real_t   *m_v ;     /* relative volume */
-   Real_t   *m_volo ;  /* reference volume */
-   Real_t   *m_vnew ;  /* new relative volume -- temporary */
-   Real_t   *m_delv ;  /* m_vnew - m_v */
-   Real_t   *m_vdov ;  /* volume derivative over volume */
-
-   Real_t   *m_arealg ;  /* characteristic length of an element */
-   
-   Real_t   *m_ss ;      /* "sound speed" */
-
-   Real_t   *m_elemMass ;  /* mass */
-    
+HCC_ARRAY_OBJECT(Real_t, delx_zeta);
+HCC_ARRAY_OBJECT(Real_t, delv_zeta);
+HCC_ARRAY_OBJECT(Real_t, delx_xi);
+HCC_ARRAY_OBJECT(Real_t, delv_xi);
+HCC_ARRAY_OBJECT(Real_t, delx_eta);
+HCC_ARRAY_OBJECT(Real_t, delv_eta);
+HCC_ARRAY_OBJECT(Index_t, elemBC);
+HCC_ARRAY_OBJECT(Index_t, lxim);
+HCC_ARRAY_OBJECT(Index_t, lxip);
+HCC_ARRAY_OBJECT(Index_t, letam);
+HCC_ARRAY_OBJECT(Index_t, letap);
+HCC_ARRAY_OBJECT(Index_t, lzetam);
+HCC_ARRAY_OBJECT(Index_t, lzetap);
+HCC_ARRAY_OBJECT(Real_t, qq);
+HCC_ARRAY_OBJECT(Real_t, ql);
+HCC_ARRAY_OBJECT(Real_t, e);
+HCC_ARRAY_OBJECT(Real_t, p);
+HCC_ARRAY_OBJECT(Real_t, q);
+HCC_ARRAY_OBJECT(Real_t, e_old);
+HCC_ARRAY_OBJECT(Real_t, p_old);
+HCC_ARRAY_OBJECT(Real_t, q_old);
+HCC_ARRAY_OBJECT(Real_t, delvc);
+HCC_ARRAY_OBJECT(Real_t, compression);
+HCC_ARRAY_OBJECT(Real_t, compHalfStep);
+HCC_ARRAY_OBJECT(Real_t, qq_old);
+HCC_ARRAY_OBJECT(Real_t, ql_old);
+HCC_ARRAY_OBJECT(Real_t, work);
+HCC_ARRAY_OBJECT(Real_t, p_new);
+HCC_ARRAY_OBJECT(Real_t, e_new);
+HCC_ARRAY_OBJECT(Real_t, q_new);
+HCC_ARRAY_OBJECT(Real_t, bvc);
+HCC_ARRAY_OBJECT(Real_t, pbvc);
+HCC_ARRAY_OBJECT(Real_t, pHalfStep);
+HCC_ARRAY_OBJECT(Real_t, sigxx);
+HCC_ARRAY_OBJECT(Real_t, sigyy);
+HCC_ARRAY_OBJECT(Real_t, sigzz);
+HCC_ARRAY_OBJECT(Real_t, determ);
+HCC_ARRAY_OBJECT(Real_t, dvdx);
+HCC_ARRAY_OBJECT(Real_t, dvdy);
+HCC_ARRAY_OBJECT(Real_t, dvdz);
+HCC_ARRAY_OBJECT(Real_t, x8n);
+HCC_ARRAY_OBJECT(Real_t, y8n);
+HCC_ARRAY_OBJECT(Real_t, z8n);
+HCC_ARRAY_OBJECT(Real_t, fx_elem);
+HCC_ARRAY_OBJECT(Real_t, fy_elem);
+HCC_ARRAY_OBJECT(Real_t, fz_elem);
+HCC_ARRAY_OBJECT(Real_t, mindthydro);
+HCC_ARRAY_OBJECT(Real_t, mindtcourant);
 };
 
 typedef Real_t &(Domain::* Domain_member )(Index_t) ;
@@ -824,9 +1022,13 @@ struct cmdLineOpts {
 // Function Prototypes
 
 // lulesh-par
+static inline
 Real_t CalcElemVolume( const Real_t x[8],
                        const Real_t y[8],
-                       const Real_t z[8]);
+                       const Real_t z[8]) restrict(amp);
+
+Real_t CalcElemVolume_nonamp( const Real_t x[8], const Real_t y[8], const Real_t z[8] );
+
 
 // lulesh-util
 void ParseCommandLineOptions(int argc, char *argv[],
