@@ -1,5 +1,5 @@
 /*******************************************************************************
-Copyright (c) 2015 Advanced Micro Devices, Inc. 
+Copyright (c) 2016 Advanced Micro Devices, Inc. 
 
 All rights reserved.
 
@@ -28,7 +28,7 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 *******************************************************************************/
-/// \file
+
 /// Computes forces for the 12-6 Lennard Jones (LJ) potential.
 ///
 /// The Lennard-Jones model is not a good representation for the
@@ -100,8 +100,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "linkCells.h"
 #include "memUtils.h"
 
-#include <amp.h>
-using namespace concurrency;
+#include <hc.hpp>
+using namespace hc;
 
 #define POT_SHIFT 1.0
 
@@ -146,13 +146,8 @@ void ljPrint(FILE* file, BasePotential* pot)
    fprintf(file, "  Potential type   : Lennard-Jones\n");
    fprintf(file, "  Species name     : %s\n", ljPot->name);
    fprintf(file, "  Atomic number    : %d\n", ljPot->atomicNo);
-   //fprintf(file, "  Mass             : "FMT1" amu\n", ljPot->mass / amuToInternalMass); // print in amu
    fprintf(file, "  Mass             : %lg amu\n", ljPot->mass / amuToInternalMass); // print in amu
    fprintf(file, "  Lattice Type     : %s\n", ljPot->latticeType);
-   //fprintf(file, "  Lattice spacing  : "FMT1" Angstroms\n", ljPot->lat);
-   //fprintf(file, "  Cutoff           : "FMT1" Angstroms\n", ljPot->cutoff);
-   //fprintf(file, "  Epsilon          : "FMT1" eV\n", ljPot->epsilon);
-   //fprintf(file, "  Sigma            : "FMT1" Angstroms\n", ljPot->sigma);
    fprintf(file, "  Lattice spacing  : %lg Angstroms\n", ljPot->lat);
    fprintf(file, "  Cutoff           : %lg Angstroms\n", ljPot->cutoff);
    fprintf(file, "  Epsilon          : %lg eV\n", ljPot->epsilon);
@@ -167,97 +162,34 @@ int ljForce(SimFlat* s)
    real_t rCut = pot->cutoff;
    real_t rCut2 = rCut*rCut;
 
+   real_t s6 = sigma*sigma*sigma*sigma*sigma*sigma;
+   real_t rCut6 = s6 / (rCut2*rCut2*rCut2);
+   real_t eShift = POT_SHIFT * rCut6 * (rCut6 - 1.0);
+   int nNbrBoxes = 27;
+   
    // zero forces and energy
    real_t ePot = 0.0;
    s->ePotential = 0.0;
    int fSize = s->boxes->nTotalBoxes*MAXATOMS;
-		
-   parallel_for_each(
-		extent<1>(fSize), [=](index<1> idx) restrict(amp)
-		{
-			s->atoms->f[idx[0]][0] = 0.;
-			s->atoms->f[idx[0]][1] = 0.;
-			s->atoms->f[idx[0]][2] = 0.;
-			s->atoms->U[idx[0]] = 0.;
-		}
-	);
-
-#if 0
+   int nBoxes = s->boxes->nTotalBoxes;
+   extent<1> boxesExt(s->boxes->nLocalBoxes * MAXATOMS);
+   tiled_extent<1> tBoxesExt(boxesExt, MAXATOMS);
+   completion_future fut;   
+   
    for (int ii=0; ii<fSize; ++ii)
    {
-      zeroReal3(s->atoms->f[ii]);
-      s->atoms->U[ii] = 0.;
+     s->atoms->f[ii*3 + 0] = 0.;
+     s->atoms->f[ii*3 + 1] = 0.;
+     s->atoms->f[ii*3 + 2] = 0.;     
+     s->atoms->U[ii] = 0.;
    }
-#endif
 
-   real_t s6 = sigma*sigma*sigma*sigma*sigma*sigma;
+   HCC_ARRAY_STRUC(real_t, U, fSize, s->atoms->U);
+   HCC_ARRAY_STRUC(real_t, f, fSize*3, s->atoms->f);
+   HCC_ARRAY_STRUC(real_t, r, fSize*3, s->atoms->r);
+   HCC_ARRAY_STRUC(int, nAtoms, nBoxes, s->boxes->nAtoms);
+   HCC_ARRAY_STRUC(int, nbrBoxes, nBoxes * nNbrBoxes, s->boxes->nbrBoxes);
 
-   real_t rCut6 = s6 / (rCut2*rCut2*rCut2);
-   real_t eShift = POT_SHIFT * rCut6 * (rCut6 - 1.0);
-
-   int nNbrBoxes = 27;
-
-/* CPP AMP implementation which does not use any tiling 
- * Not the most optimal version and is present here only for
- * reference and comparative purposes
- */
-
-#if 0
-   // No tiling
-   extent<1> boxesExt(s->boxes->nLocalBoxes);
-	parallel_for_each(
-			boxesExt, [=](index<1> idx) restrict(amp)
-   {
-      int nIBox = s->boxes->nAtoms[idx[0]];
-      // loop over neighbors of iBox
-      for (int jTmp=0; jTmp<nNbrBoxes; jTmp++)
-      {
-         int jBox = s->boxes->nbrBoxes[idx[0]][jTmp];
-        
-		 if(jBox < 0)
-			return;
-         //assert(jBox>=0);
-         
-         int nJBox = s->boxes->nAtoms[jBox];
-		
-         // loop over atoms in iBox
-
-         for (int iOff=idx[0]*MAXATOMS,ii=0; ii<nIBox; ii++,iOff++)
-         {
-            // loop over atoms in jBox
-            for (int jOff=MAXATOMS*jBox,ij=0; ij<nJBox; ij++,jOff++)
-            {
-               real_t dr[3];
-               real_t r2 = 0.0;
-               for (int m=0; m<3; m++)
-               {
-                  dr[m] = s->atoms->r[iOff][m]-s->atoms->r[jOff][m];
-                  r2+=dr[m]*dr[m];
-               }
-
-               if ( r2 > rCut2 || r2 <= 0.0) continue;
-
-               // Important note:
-               // from this point on r actually refers to 1.0/r
-               r2 = 1.0/r2;
-               real_t r6 = s6 * (r2*r2*r2);
-               real_t eLocal = r6 * (r6 - 1.0) - eShift;
-               s->atoms->U[iOff] += 0.5*eLocal;
-
-               // different formulation to avoid sqrt computation
-               real_t fr = - 4.0*epsilon*r6*r2*(12.0*r6 - 6.0);
-               for (int m=0; m<3; m++)
-               {
-				  s->atoms->f[iOff][m] -= dr[m]*fr;
-               }
-            } // loop over atoms in jBox
-         } // loop over atoms in iBox
-      } // loop over neighbor boxes
-   } // loop over local boxes in system
-	);
-#endif
-
-	// With tiling
 	/* With tiling, each i-th box works in one tile each with several threads. 
 	 * Each thread in the tile works on each i-th atom.
 	 * Number of threads in a tile is equal to 64, i.e., the wavefront size.
@@ -270,99 +202,69 @@ int ljForce(SimFlat* s)
 	 * two boxes because for LJ max. atoms in a box = 32. Therefore, 64/32 = 2
 	 * boxes can be computed within a wavefront.
 	 */
-#define NO_OPT 1
-
-#if NO_OPT
-   extent<1> boxesExt(s->boxes->nLocalBoxes * MAXATOMS);
-#else
-   int max_atoms_in_box = 32; // Max atoms in a box for LJ, as computed during initialization
-   int tile_size = 64; // Wavefront size on AMD GPUs
-   int extent_size = ((s->boxes->nLocalBoxes * max_atoms_in_box / tile_size) + 1) * tile_size;
-
-   extent<1> boxesExt(extent_size);
-#endif
 
    // loop over local boxes
-	parallel_for_each(
-			boxesExt.tile<MAXATOMS>(), [=](tiled_index<MAXATOMS> t_idx) restrict(amp)
-   {
-#if NO_OPT
-      int nIBox = s->boxes->nAtoms[t_idx.tile[0]];
-#else
-	  int ii_local = t_idx.local[0];
-	  int box_id = t_idx.tile[0] * (tile_size / max_atoms_in_box) + ii_local / max_atoms_in_box;
-	  int nIBox = s->boxes->nAtoms[box_id];
-#endif
-      // loop over neighbors of iBox
-      for (int jTmp=0; jTmp<nNbrBoxes; jTmp++)
-      {
-#if NO_OPT
-         int jBox = s->boxes->nbrBoxes[t_idx.tile[0]][jTmp];
-#else
-         int jBox = s->boxes->nbrBoxes[box_id][jTmp];
-#endif
-        
-		 if(jBox < 0)
-			return;
-         //assert(jBox>=0);
-         
-         int nJBox = s->boxes->nAtoms[jBox];
-		
-#if NO_OPT
-		 int iOff = t_idx.tile[0] * MAXATOMS;
-		 int ii = t_idx.local[0];
-#else
-		 int iOff = box_id * MAXATOMS;
-		 int ii = ii_local % max_atoms_in_box;
-#endif
-         // loop over atoms in iBox
+   fut = parallel_for_each(tBoxesExt, [=
+				       HCC_ID(U)
+				       HCC_ID(f)
+				       HCC_ID(r)
+				       HCC_ID(nAtoms)
+				       HCC_ID(nbrBoxes)](tiled_index<1> t_idx) restrict(amp){
+       int nIBox = nAtoms[t_idx.tile[0]];
+       // loop over neighbors of iBox
+       for (int jTmp=0; jTmp<nNbrBoxes; jTmp++){
+	 int jBox = nbrBoxes[t_idx.tile[0]*nNbrBoxes + jTmp];
+	 if(jBox >= 0){
+	   int nJBox = nAtoms[jBox];
+	   int iOff = t_idx.tile[0] * MAXATOMS;
+	   int ii = t_idx.local[0];
+	   // loop over atoms in iBox
+	   if(ii < nIBox){
+	     // loop over atoms in jBox
+	     for (int jOff=MAXATOMS*jBox,ij=0; ij<nJBox; ij++,jOff++){
+	       real_t dr[3];
+	       real_t r2 = 0.0;
+	       for (int m=0; m<3; m++){
+		 dr[m] = r[(iOff + ii)*3 + m] - r[jOff*3 + m];
+		 r2+=dr[m]*dr[m];
+	       }
 
-		 if(ii < nIBox)
-         {
-            // loop over atoms in jBox
-            for (int jOff=MAXATOMS*jBox,ij=0; ij<nJBox; ij++,jOff++)
-            {
-               real_t dr[3];
-               real_t r2 = 0.0;
-               for (int m=0; m<3; m++)
-               {
-                  dr[m] = s->atoms->r[iOff + ii][m]-s->atoms->r[jOff][m];
-                  r2+=dr[m]*dr[m];
-               }
+	       if ( r2 <= rCut2 && r2 > 0.0){ 
+		 // Important note:
+		 // from this point on r actually refers to 1.0/r
+		 r2 = 1.0/r2;
+		 real_t r6 = s6 * (r2*r2*r2);
+		 real_t eLocal = r6 * (r6 - 1.0) - eShift;
+		 U[iOff + ii] += 0.5*eLocal;
 
-               if ( r2 > rCut2 || r2 <= 0.0) continue;
+		 // different formulation to avoid sqrt computation
+		 real_t fr = - 4.0*epsilon*r6*r2*(12.0*r6 - 6.0);
+		 for (int m=0; m<3; m++){
+		   f[(iOff + ii)*3 + m] -= dr[m]*fr;
+		 }
+	       }
+	     } // loop over atoms in jBox
+	   } // close if ii < nIBox
+	 } // close if jBox >= 0
+       } // loop over neighbor boxes
+     } // loop over local boxes in system
+     );
+   fut.wait();
 
-               // Important note:
-               // from this point on r actually refers to 1.0/r
-               r2 = 1.0/r2;
-               real_t r6 = s6 * (r2*r2*r2);
-               real_t eLocal = r6 * (r6 - 1.0) - eShift;
-               s->atoms->U[iOff + ii] += 0.5*eLocal;
+   HCC_SYNC(U,s->atoms->U);
+   HCC_SYNC(f,s->atoms->f);   
+   
 
-               // different formulation to avoid sqrt computation
-               real_t fr = - 4.0*epsilon*r6*r2*(12.0*r6 - 6.0);
-               for (int m=0; m<3; m++)
-               {
-                  s->atoms->f[iOff + ii][m] -= dr[m]*fr;
-               }
-            } // loop over atoms in jBox
-         } // loop over atoms in iBox
-      } // loop over neighbor boxes
-   } // loop over local boxes in system
-	);
-
-	/* A loop over all the atoms is requrired to reduce the ePot value.
-	 * Otherwise, update to ePot is required to be atomic which will 
-	 * lead to slow performance. 
-	 */
-	for (int iBox=0; iBox<s->boxes->nLocalBoxes; iBox++)
-	{
-		for(int iAtom = 0; iAtom < s->boxes->nAtoms[iBox]; iAtom++)
-		{
-			int iOff = iBox * MAXATOMS + iAtom;
-			ePot += s->atoms->U[iOff];
-		}
-	}
+   /* A loop over all the atoms is requrired to reduce the ePot value.
+    * Otherwise, update to ePot is required to be atomic which will 
+    * lead to slow performance. 
+    */
+   for (int iBox=0; iBox<s->boxes->nLocalBoxes; iBox++){
+     for(int iAtom = 0; iAtom < s->boxes->nAtoms[iBox]; iAtom++){
+       int iOff = iBox * MAXATOMS + iAtom;
+       ePot += s->atoms->U[iOff];
+     }
+   }
    ePot = ePot*4.0*epsilon;
    s->ePotential = ePot;
 

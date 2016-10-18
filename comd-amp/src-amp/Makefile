@@ -2,8 +2,13 @@
 
 SHELL = /bin/bash
 
-CLAMP_HOME = /opt/hcc
-CLAMP_CONFIG = $(CLAMP_HOME)/bin/clamp-config
+# HSA Machine
+#HCC_HOME=/opt/rocm/hcc-hsail
+
+# dGPU Machine
+HCC_HOME=/opt/rocm/hcc-lc
+
+HCC_CONFIG = $(HCC_HOME)/bin/hcc-config
 
 ### CoMD can be built in either double or single precision and with or
 ### without MPI.  Select desired precision and MPI here.
@@ -12,6 +17,8 @@ CLAMP_CONFIG = $(CLAMP_HOME)/bin/clamp-config
 DOUBLE_PRECISION = ON
 # MPI for parallel (ON/OFF)
 DO_MPI = OFF
+# Use Array_view instead of Array
+HCC_ARR_VIEW = ON
 
 ### Set your desired C compiler and any necessary flags.  Note that CoMD
 ### uses some c99 features.  You can also set flags for optimization and
@@ -22,13 +29,12 @@ ifeq ($(DO_MPI), ON)
 CC = mpicc
 OPTFLAGS = -g -O5
 else
-CC=$(CLAMP_HOME)/bin/clang++
-OPTFLAGS = -g -O3
+CC=$(HCC_HOME)/bin/hcc
+OPTFLAGS = -O3
 endif
-INCLUDES = -I. -I$(CLAMP_HOME)/include   
-CFLAGS     = -std=c++11 $(shell $(CLAMP_CONFIG) --cxxflags) -Xclang -fhsa-ext 
-#CFLAGS = -std=c++amp $(INCLUDES) -Xclang -fhsa-ext
-C_LIB = -lm
+INCLUDES = -I.
+CFLAGS   = $(shell $(HCC_CONFIG) --install --cxxflags)
+C_LIB    = -lm
 
 
 ### If you need to specify include paths, library paths, or link flags
@@ -40,8 +46,6 @@ MPI_INCLUDE =
 ### platform requires.
 OTHER_LIB =
 OTHER_INCLUDE =
-
-
 
 
 #########################################
@@ -65,6 +69,10 @@ else
 CFLAGS += -DSINGLE
 endif
 
+ifeq ($(HCC_ARR_VIEW), ON)
+CFLAGS += -DARRAY_VIEW
+endif
+
 # Set executable name and add includes & libraries for MPI if needed.
 ifeq ($(DO_MPI), ON)
 CoMD_VARIANT = CoMD-mpi
@@ -73,7 +81,7 @@ CFLAGS += -DDO_MPI
 LDFLAGS += ${MPI_LIB}
 else
 CoMD_VARIANT = CoMD-amp
-LDFLAGS = $(shell $(CLAMP_CONFIG) --install --ldflags)  
+LDFLAGS = $(shell $(HCC_CONFIG) --install --ldflags)  
 endif
 CoMD_EXE = ${BIN_DIR}/${CoMD_VARIANT}
 

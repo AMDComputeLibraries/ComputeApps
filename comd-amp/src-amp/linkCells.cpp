@@ -1,5 +1,5 @@
 /*******************************************************************************
-Copyright (c) 2015 Advanced Micro Devices, Inc. 
+Copyright (c) 2016 Advanced Micro Devices, Inc. 
 
 All rights reserved.
 
@@ -108,6 +108,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 static void copyAtom(LinkCell* boxes, Atoms* atoms, int iAtom, int iBox, int jAtom, int jBox);
 static int getBoxFromCoord(LinkCell* boxes, real_t rr[3]);
+static int getBoxFromCoord(LinkCell* boxes, real_t x, real_t y, real_t z);
 static void emptyHaloCells(LinkCell* boxes);
 static void getTuple(LinkCell* boxes, int iBox, int* ixp, int* iyp, int* izp);
 
@@ -140,7 +141,12 @@ LinkCell* initLinkCells(const Domain* domain, real_t cutoff)
    assert ( (ll->gridSize[0] >= 2) && (ll->gridSize[1] >= 2) && (ll->gridSize[2] >= 2) );
 
    // Added creating neighbors once
-   ll->nbrBoxes = (int **) comdMalloc(ll->nTotalBoxes*sizeof(int*));
+   ll->nbrBoxes = (int *) comdMalloc(ll->nTotalBoxes*27*sizeof(int*));
+   for (int iBox=0; iBox<ll->nLocalBoxes; ++iBox){
+      int nNbrBoxes = getNeighborBoxes(ll, iBox, &(ll->nbrBoxes[iBox*27]));
+   }
+
+   /*ll->nbrBoxes = (int **) comdMalloc(ll->nTotalBoxes*sizeof(int*));
    for (int iBox=0; iBox<ll->nTotalBoxes; ++iBox)
    {
       ll->nbrBoxes[iBox] = (int *) comdMalloc(27*sizeof(int));
@@ -149,7 +155,7 @@ LinkCell* initLinkCells(const Domain* domain, real_t cutoff)
    for (int iBox=0; iBox<ll->nLocalBoxes; ++iBox)
    {
       int nNbrBoxes = getNeighborBoxes(ll, iBox, ll->nbrBoxes[iBox]);
-   }
+      }*/
 
    return ll;
 }
@@ -160,7 +166,7 @@ void destroyLinkCells(LinkCell** boxes)
    if (! *boxes) return;
 
    comdFree((*boxes)->nAtoms);
-   comdFree((*boxes)->nbrBoxes);
+   //comdFree((*boxes)->nbrBoxes);
    comdFree(*boxes);
    *boxes = NULL;
 
@@ -216,14 +222,15 @@ void putAtomInBox(LinkCell* boxes, Atoms* atoms,
    boxes->nAtoms[iBox]++;
    atoms->gid[iOff] = gid;
    atoms->iSpecies[iOff] = iType;
+
+   atoms->r[iOff*3 +0] = x;
+   atoms->r[iOff*3 +1] = y;
+   atoms->r[iOff*3 +2] = z;
    
-   atoms->r[iOff][0] = x;
-   atoms->r[iOff][1] = y;
-   atoms->r[iOff][2] = z;
-   
-   atoms->p[iOff][0] = px;
-   atoms->p[iOff][1] = py;
-   atoms->p[iOff][2] = pz;
+   atoms->p[iOff*3 +0] = px;
+   atoms->p[iOff*3 +1] = py;
+   atoms->p[iOff*3 +2] = pz;
+
 }
 
 /// Calculates the link cell index from the grid coords.  The valid
@@ -326,7 +333,8 @@ void updateLinkCells(LinkCell* boxes, Atoms* atoms)
       int ii=0;
       while (ii < boxes->nAtoms[iBox])
       {
-         int jBox = getBoxFromCoord(boxes, atoms->r[iOff+ii]);
+	int jBox = getBoxFromCoord(boxes, atoms->r[(iOff+ii)*3 +0],
+				   atoms->r[(iOff+ii)*3 + 1], atoms->r[(iOff+ii)*3 + 2]);
          if (jBox != iBox)
             moveAtom(boxes, atoms, ii, iBox, jBox);
          else
@@ -360,9 +368,9 @@ void copyAtom(LinkCell* boxes, Atoms* atoms, int iAtom, int iBox, int jAtom, int
    const int jOff = MAXATOMS*jBox+jAtom;
    atoms->gid[jOff] = atoms->gid[iOff];
    atoms->iSpecies[jOff] = atoms->iSpecies[iOff];
-   memcpy(atoms->r[jOff], atoms->r[iOff], sizeof(real3));
-   memcpy(atoms->p[jOff], atoms->p[iOff], sizeof(real3));
-   memcpy(atoms->f[jOff], atoms->f[iOff], sizeof(real3));
+   memcpy(atoms->r+jOff*3, atoms->r+iOff*3, sizeof(real_t)*3);
+   memcpy(atoms->p+jOff*3, atoms->p+iOff*3, sizeof(real_t)*3);
+   memcpy(atoms->f+jOff*3, atoms->f+iOff*3, sizeof(real_t)*3);
    memcpy(atoms->U+jOff,  atoms->U+iOff,  sizeof(real_t));
 }
 
@@ -376,6 +384,12 @@ void copyAtom(LinkCell* boxes, Atoms* atoms, int iAtom, int iBox, int jAtom, int
 /// assignments for atoms that are near a link cell boundaries.  If no
 /// ranks claim an atom in a local cell it will be lost.  If multiple
 /// ranks claim an atom it will be duplicated.
+int getBoxFromCoord(LinkCell* boxes, real_t x, real_t y, real_t z)
+{
+   real_t xyz[3] = {x,y,z};
+   return getBoxFromCoord(boxes, xyz);
+}
+
 int getBoxFromCoord(LinkCell* boxes, real_t rr[3])
 {
    const real_t* localMin = boxes->localMin; // alias

@@ -1,5 +1,5 @@
 /*******************************************************************************
-Copyright (c) 2015 Advanced Micro Devices, Inc. 
+Copyright (c) 2016 Advanced Micro Devices, Inc. 
 
 All rights reserved.
 
@@ -50,9 +50,9 @@ typedef struct AtomsSt
    int* gid;      //!< A globally unique id for each atom
    int* iSpecies; //!< the species index of the atom
 
-   real3*  r;     //!< positions
-   real3*  p;     //!< momenta of atoms
-   real3*  f;     //!< forces 
+   real_t* r;     //!< positions
+   real_t* p;     //!< momenta of atoms
+   real_t* f;     //!< forces 
    real_t* U;     //!< potential energy per atom
 } Atoms;
 

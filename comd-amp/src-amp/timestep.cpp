@@ -1,5 +1,5 @@
 /*******************************************************************************
-Copyright (c) 2015 Advanced Micro Devices, Inc. 
+Copyright (c) 2016 Advanced Micro Devices, Inc. 
 
 All rights reserved.
 
@@ -39,8 +39,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "parallel.h"
 #include "performanceTimers.h"
 
-#include <amp.h>
-using namespace concurrency;
+#include <hc.hpp>
+using namespace hc;
 
 static void advanceVelocity(SimFlat* s, int nBoxes, real_t dt);
 static void advancePosition(SimFlat* s, int nBoxes, real_t dt);
@@ -106,14 +106,16 @@ void advanceVelocity(SimFlat* s, int nBoxes, real_t dt)
  * between CPU and GPU
 */
 
+  completion_future fut;
+  
 #if 1 // Run on CPU
    for (int iBox=0; iBox<nBoxes; iBox++)
    {
       for (int iOff=MAXATOMS*iBox,ii=0; ii<s->boxes->nAtoms[iBox]; ii++,iOff++)
       {
-         s->atoms->p[iOff][0] += dt*s->atoms->f[iOff][0];
-         s->atoms->p[iOff][1] += dt*s->atoms->f[iOff][1];
-         s->atoms->p[iOff][2] += dt*s->atoms->f[iOff][2];
+         s->atoms->p[iOff*3 + 0] += dt*s->atoms->f[iOff*3 + 0];
+         s->atoms->p[iOff*3 + 1] += dt*s->atoms->f[iOff*3 + 1];
+         s->atoms->p[iOff*3 + 2] += dt*s->atoms->f[iOff*3 + 2];
       }
    }
 
@@ -121,9 +123,10 @@ void advanceVelocity(SimFlat* s, int nBoxes, real_t dt)
 
    // C++ AMP with tiling. At present 4x slower than single-threaded CPU
    extent<1> boxesExt(nBoxes * MAXATOMS);
+   tiled_extent<1> tBoxesExt(boxesExt, MAXATOMS);
 
-   parallel_for_each(
-		   boxesExt.tile<MAXATOMS>(), [=](tiled_index<MAXATOMS> t_idx) restrict(amp)
+   fut = parallel_for_each(
+		   tBoxesExt, [=](tiled_index<1> t_idx) restrict(amp)
 		{
 			int iBox = t_idx.tile[0];
 			int iOff = iBox * MAXATOMS;
@@ -131,12 +134,13 @@ void advanceVelocity(SimFlat* s, int nBoxes, real_t dt)
 
 			if(ii < s->boxes->nAtoms[iBox])
 			{
-				s->atoms->p[iOff + ii][0] += dt * s->atoms->f[iOff + ii][0];
-				s->atoms->p[iOff + ii][1] += dt * s->atoms->f[iOff + ii][1];
-				s->atoms->p[iOff + ii][2] += dt * s->atoms->f[iOff + ii][2];
+				s->atoms->p[(iOff + ii)*3 + 0] += dt * s->atoms->f[(iOff + ii)*3 + 0];
+				s->atoms->p[(iOff + ii)*3 + 1] += dt * s->atoms->f[(iOff + ii)*3 + 1];
+				s->atoms->p[(iOff + ii)*3 + 2] += dt * s->atoms->f[(iOff + ii)*3 + 2];
 			}
 		}
 	);
+   fut.wait();
 #endif
 }
 
@@ -147,7 +151,7 @@ void advancePosition(SimFlat* s, int nBoxes, real_t dt)
  * has been switched off. The following #if toggles the execution
  * between CPU and GPU
 */
-
+  completion_future fut;
 #if 1 // Run on CPU
    for (int iBox=0; iBox<nBoxes; iBox++)
    {
@@ -155,9 +159,9 @@ void advancePosition(SimFlat* s, int nBoxes, real_t dt)
       {
          int iSpecies = s->atoms->iSpecies[iOff];
          real_t invMass = 1.0/s->species[iSpecies].mass;
-         s->atoms->r[iOff][0] += dt*s->atoms->p[iOff][0]*invMass;
-         s->atoms->r[iOff][1] += dt*s->atoms->p[iOff][1]*invMass;
-         s->atoms->r[iOff][2] += dt*s->atoms->p[iOff][2]*invMass;
+         s->atoms->r[iOff*3 + 0] += dt*s->atoms->p[iOff*3 + 0]*invMass;
+         s->atoms->r[iOff*3 + 1] += dt*s->atoms->p[iOff*3 + 1]*invMass;
+         s->atoms->r[iOff*3 + 2] += dt*s->atoms->p[iOff*3 + 2]*invMass;
       }
    }
 
@@ -165,9 +169,10 @@ void advancePosition(SimFlat* s, int nBoxes, real_t dt)
    
    // C++ AMP with tiling. At present 4x slower than single-threaded CPU
     extent<1> boxesExt(nBoxes * MAXATOMS);
+    tiled_extent<1> tBoxesExt(boxesExt, MAXATOMS);
 
-   parallel_for_each(
-		   boxesExt.tile<MAXATOMS>(), [=](tiled_index<MAXATOMS> t_idx) restrict(amp)
+   fut = parallel_for_each(
+		   tBoxesExt, [=](tiled_index<1> t_idx) restrict(amp)
 		{
 			int iBox = t_idx.tile[0];
 			int iOff = iBox * MAXATOMS;
@@ -178,12 +183,13 @@ void advancePosition(SimFlat* s, int nBoxes, real_t dt)
 				int iSpecies = s->atoms->iSpecies[iOff + ii];
 			    real_t invMass = 1.0/s->species[iSpecies].mass;
 			
-				s->atoms->r[iOff + ii][0] += dt*s->atoms->p[iOff + ii][0]*invMass;
-		        s->atoms->r[iOff + ii][1] += dt*s->atoms->p[iOff + ii][1]*invMass;
-			    s->atoms->r[iOff + ii][2] += dt*s->atoms->p[iOff + ii][2]*invMass;
+				s->atoms->r[(iOff + ii)*3 + 0] += dt*s->atoms->p[(iOff + ii)*3 + 0]*invMass;
+				s->atoms->r[(iOff + ii)*3 + 1] += dt*s->atoms->p[(iOff + ii)*3 + 1]*invMass;
+				s->atoms->r[(iOff + ii)*3 + 2] += dt*s->atoms->p[(iOff + ii)*3 + 2]*invMass;
 			}
 		}
 	);
+   fut.wait();
 #endif
 }
 
@@ -200,9 +206,9 @@ void kineticEnergy(SimFlat* s)
       {
          int iSpecies = s->atoms->iSpecies[iOff];
          real_t invMass = 0.5/s->species[iSpecies].mass;
-         eLocal[1] += ( s->atoms->p[iOff][0] * s->atoms->p[iOff][0] +
-         s->atoms->p[iOff][1] * s->atoms->p[iOff][1] +
-         s->atoms->p[iOff][2] * s->atoms->p[iOff][2] )*invMass;
+         eLocal[1] += ( s->atoms->p[iOff*3 + 0] * s->atoms->p[iOff*3 + 0] +
+         s->atoms->p[iOff*3 + 1] * s->atoms->p[iOff*3 + 1] +
+         s->atoms->p[iOff*3 + 2] * s->atoms->p[iOff*3 + 2] )*invMass;
       }
    }
 

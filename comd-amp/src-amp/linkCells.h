@@ -1,5 +1,5 @@
 /*******************************************************************************
-Copyright (c) 2015 Advanced Micro Devices, Inc. 
+Copyright (c) 2016 Advanced Micro Devices, Inc. 
 
 All rights reserved.
 
@@ -38,7 +38,20 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "mytype.h"
 
 /// The maximum number of atoms that can be stored in a link cell.
-#define MAXATOMS 64 
+#define MAXATOMS 64
+
+#ifdef ARRAY_VIEW
+#define HCC_ARRAY_STRUC(type, name, size, ptr) array_view<type> name(size, ptr)
+#define HCC_ARRAY_OBJECT(type, name) array_view<type> &name
+#define HCC_ID(name)
+#define HCC_SYNC(name, ptr) name.synchronize()
+#else
+#define HCC_ARRAY_STRUC(type, name, size, ptr) array<type> name(size); copy(ptr, name)
+#define HCC_ARRAY_OBJECT(type, name) array<type> &name
+#define HCC_ID(name) ,&name
+#define HCC_SYNC(name, ptr) copy(name, ptr)
+#endif
+
 
 struct DomainSt;
 struct AtomsSt;
@@ -58,7 +71,7 @@ typedef struct LinkCellSt
    real3 invBoxSize;    //!< inverse size of box in each dimension
 
    int* nAtoms;         //!< total number of atoms in each box
-   int** nbrBoxes;      //!< neighbor boxes for each box
+   int* nbrBoxes;      //!< neighbor boxes for each box
 } LinkCell;
 
 LinkCell* initLinkCells(const struct DomainSt* domain, real_t cutoff);

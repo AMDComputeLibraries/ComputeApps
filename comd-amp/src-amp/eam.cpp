@@ -1,5 +1,5 @@
 /*******************************************************************************
-Copyright (c) 2015 Advanced Micro Devices, Inc. 
+Copyright (c) 2016 Advanced Micro Devices, Inc. 
 
 All rights reserved.
 
@@ -130,9 +130,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "performanceTimers.h"
 #include "haloExchange.h"
 
-#include <amp.h>
-#include <amp_math.h>
-using namespace concurrency;
+#include <hc.hpp>
+#include <hc_math.hpp>
+using namespace hc;
 using namespace precise_math;
 
 #define MAX(A,B) ((A) > (B) ? (A) : (B))
@@ -224,6 +224,31 @@ void interpolateAMP(InterpolationObject* table, real_t r, real_t* f, real_t* df)
 	*df = 0.5*(g1 + r*(g2-g1))*table->invDx;
 }
 
+void interpolateAMP(const HCC_ARRAY_OBJECT(real_t, tt), real_t x0, real_t invDx, int n, real_t r, real_t *f, real_t *df) restrict(amp)
+{
+  //const real_t* tt = table->values; // alias
+
+	if ( r < x0 ) r = x0;
+
+	r = (r-x0)*(invDx) ;
+	int ii = (int)floor(r);
+	if (ii > n){
+	  ii = n;
+	  r = n / invDx;
+	}
+	// reset r to fractional distance
+	r = r - floor(r);
+
+	real_t g1 = tt[ii+1] - tt[ii-1];
+	real_t g2 = tt[ii+2] - tt[ii];
+
+	*f = tt[ii] + 0.5*r*(g1 + r*(tt[ii+1] + tt[ii-1] - 2.0*tt[ii]) );
+
+	*df = 0.5*(g1 + r*(g2-g1))*invDx;
+}
+
+
+
 /// Calculate potential energy and forces for the EAM potential.
 ///
 /// Three steps are required:
@@ -234,22 +259,23 @@ void interpolateAMP(InterpolationObject* table, real_t r, real_t* f, real_t* df)
 ///   derivative for each atom
 ///   -# Loop over all atoms and their neighbors, compute the embedding
 ///   energy contribution to the force and add to the two-body force
-/// 
+///
+
 int eamForce(SimFlat* s)
 {
+
 	EamPotential* pot = (EamPotential*) s->pot;
 	assert(pot);
 
 	// set up halo exchange and internal storage on first call to forces.
-	if (pot->forceExchange == NULL)
-	{
-		int maxTotalAtoms = MAXATOMS*s->boxes->nTotalBoxes;
-		pot->dfEmbed = (real_t *) comdMalloc(maxTotalAtoms*sizeof(real_t));
-		pot->rhobar  = (real_t *) comdMalloc(maxTotalAtoms*sizeof(real_t));
-		pot->forceExchange = initForceHaloExchange(s->domain, s->boxes);
-		pot->forceExchangeData = (ForceExchangeData *) comdMalloc(sizeof(ForceExchangeData));
-		pot->forceExchangeData->dfEmbed = pot->dfEmbed;
-		pot->forceExchangeData->boxes = s->boxes;
+	if (pot->forceExchange == NULL) {
+	  int maxTotalAtoms = MAXATOMS*s->boxes->nTotalBoxes;
+	  pot->dfEmbed = (real_t *) comdMalloc(maxTotalAtoms*sizeof(real_t));
+	  pot->rhobar  = (real_t *) comdMalloc(maxTotalAtoms*sizeof(real_t));
+	  pot->forceExchange = initForceHaloExchange(s->domain, s->boxes);
+	  pot->forceExchangeData = (ForceExchangeData *) comdMalloc(sizeof(ForceExchangeData));
+	  pot->forceExchangeData->dfEmbed = pot->dfEmbed;
+	  pot->forceExchangeData->boxes = s->boxes;
 	}
 
 	real_t rCut2 = pot->cutoff*pot->cutoff;
@@ -262,7 +288,8 @@ int eamForce(SimFlat* s)
 	memset(pot->rhobar,  0, s->boxes->nTotalBoxes*MAXATOMS*sizeof(real_t));
 
 	int nNbrBoxes = 27;
-
+	int fSize = s->boxes->nTotalBoxes*MAXATOMS;
+	int nBoxes = s->boxes->nTotalBoxes;	
 	/* With tiling, each i-th box works in one tile each with several threads. 
 	 * Each thread in the tile works on each i-th atom.
 	 * Number of threads in a tile is equal to MAXATOMS. This means that some
@@ -275,76 +302,91 @@ int eamForce(SimFlat* s)
 	 * boxes can be computed within a wavefront.
 	 */
 
-#define NO_OPT 1
-
-#if NO_OPT
 	extent<1> boxesExt(s->boxes->nLocalBoxes * MAXATOMS);
-#else
-	int max_atoms_in_box = 16; // Max atoms in a box for EAM is 14, as computed during initialization
-	int tile_size = 64; // Wavefront size on AMD GPUs
-	int extent_size = ((s->boxes->nLocalBoxes * max_atoms_in_box / tile_size) + 1) * tile_size;
+	tiled_extent<1> tBoxesExt(boxesExt, MAXATOMS);
 
-	extent<1> boxesExt(extent_size);
-#endif
+	completion_future fut;
+	
+	int phi_n = pot->phi->n;
+	real_t phi_x0 = pot->phi->x0;
+	real_t phi_invDx = pot->phi->invDx;
 
-	parallel_for_each(
-			boxesExt.tile<MAXATOMS>(), [=](tiled_index<MAXATOMS> t_idx) restrict(amp)
-			{
+	int rho_n = pot->rho->n;
+	real_t rho_x0 = pot->rho->x0;
+	real_t rho_invDx = pot->rho->invDx;
+	
+	int f_n = pot->f->n;
+	real_t f_x0 = pot->f->x0;
+	real_t f_invDx = pot->f->invDx;
 
-#if NO_OPT
-			int iBox = t_idx.tile[0];
-			int ii = t_idx.local[0];
-#else
-			int ii_local = t_idx.local[0];
-			int iBox = t_idx.tile[0] * (tile_size / max_atoms_in_box) + ii_local / max_atoms_in_box;
-			int ii = ii_local % max_atoms_in_box;
-#endif
-			int iOff = iBox * MAXATOMS;
-			int nIBox = s->boxes->nAtoms[iBox];
+	HCC_ARRAY_STRUC(real_t, U, fSize, s->atoms->U);
+	HCC_ARRAY_STRUC(real_t, rhobar, fSize, pot->rhobar);
+	HCC_ARRAY_STRUC(real_t, dfEmbed, fSize, pot->dfEmbed);
+	HCC_ARRAY_STRUC(real_t, f, fSize*3, s->atoms->f);
+	HCC_ARRAY_STRUC(real_t, r, fSize*3, s->atoms->r);
+	HCC_ARRAY_STRUC(int, nAtoms, nBoxes, s->boxes->nAtoms);
+	HCC_ARRAY_STRUC(int, nbrBoxes, nBoxes * nNbrBoxes, s->boxes->nbrBoxes);
+	HCC_ARRAY_STRUC(real_t, phi_values, phi_n + 3, pot->phi->values);
+	HCC_ARRAY_STRUC(real_t, rho_values, rho_n + 3, pot->rho->values);
+	HCC_ARRAY_STRUC(real_t, f_values, f_n + 3, pot->f->values);	
+	
+	
+	
+	fut = parallel_for_each(tBoxesExt, [=
+					    HCC_ID(U)
+					    HCC_ID(rhobar)
+					    HCC_ID(f)
+					    HCC_ID(r)
+					    HCC_ID(nAtoms)
+					    HCC_ID(nbrBoxes)
+					    HCC_ID(phi_values)
+					    HCC_ID(rho_values)](tiled_index<1> t_idx) restrict(amp)
+	{
 
-			// loop over neighbor boxes of iBox (some may be halo boxes)
-			for (int jTmp=0; jTmp<nNbrBoxes; jTmp++)
-			{
-			int jBox = s->boxes->nbrBoxes[iBox][jTmp];
+	  int iBox = t_idx.tile[0];
+	  int ii = t_idx.local[0];
+	  int iOff = iBox * MAXATOMS;
+	  int nIBox = nAtoms[iBox];
 
-			int nJBox = s->boxes->nAtoms[jBox];
-			// loop over atoms in iBox
-			if(ii < nIBox)
-			{
-				// loop over atoms in jBox
-				for (int jOff=MAXATOMS*jBox,ij=0; ij<nJBox; ij++,jOff++)
-				{
-					double r2 = 0.0;
-					real3 dr;
-					for (int k=0; k<3; k++)
-					{
-						dr[k]=s->atoms->r[iOff + ii][k]-s->atoms->r[jOff][k];
-						r2+=dr[k]*dr[k];
-					}
-					if(r2>rCut2 || r2 <= 0.0) continue;
+	  // loop over neighbor boxes of iBox (some may be halo boxes)
+	  for (int jTmp=0; jTmp<nNbrBoxes; jTmp++){
+	    int jBox = nbrBoxes[iBox*nNbrBoxes + jTmp];
 
-					double r = sqrt(r2);
+	    int nJBox = nAtoms[jBox];
+	    // loop over atoms in iBox
+	    if(ii < nIBox){
+	      // loop over atoms in jBox
+	      for (int jOff=MAXATOMS*jBox,ij=0; ij<nJBox; ij++,jOff++){
+		double r2 = 0.0;
+		real3 dr;
+		for (int k=0; k<3; k++){
+		  dr[k] = r[(iOff + ii)*3 + k] - r[jOff*3 + k];
+		  r2+=dr[k]*dr[k];
+		}
+		if ( r2 <= rCut2 && r2 > 0.0){ 		
 
-					real_t phiTmp, dPhi, rhoTmp, dRho;
-					interpolateAMP(pot->phi, r, &phiTmp, &dPhi);
-					interpolateAMP(pot->rho, r, &rhoTmp, &dRho);
+		  double rsq = sqrt(r2);
+		  real_t phiTmp, dPhi, rhoTmp, dRho;
 
-					for (int k=0; k<3; k++)
-					{
-						s->atoms->f[iOff + ii][k] -= dPhi*dr[k]/r;
-					}
+		  interpolateAMP(phi_values, phi_x0, phi_invDx, phi_n, rsq, &phiTmp, &dPhi);
+		  interpolateAMP(rho_values, rho_x0, rho_invDx, rho_n, rsq, &rhoTmp, &dRho);  
 
-					s->atoms->U[iOff + ii] += 0.5*phiTmp;
+		  for (int k=0; k<3; k++){
+		    f[(iOff + ii)*3 + k] -= dPhi*dr[k]/rsq;
+		  }
 
-					// accumulate rhobar for each atom
-					pot->rhobar[iOff + ii] += rhoTmp;
+		  U[iOff + ii] += 0.5*phiTmp;
 
-				} // loop over atoms in jBox
-			} // loop over atoms in iBox
-			} // loop over neighbor boxes
-			} // loop over local boxes
+		  // accumulate rhobar for each atom
+		  rhobar[iOff + ii] += rhoTmp;
+		}
+	      } // loop over atoms in jBox
+	    } // loop over atoms in iBox
+	  } // loop over neighbor boxes
+	} // loop over local boxes
 	);
-
+	//fut.wait();
+	
 	/* With tiling, each i-th box works in one tile each with several threads. 
 	 * Each thread in the tile works on each i-th atom.
 	 * Number of threads in a tile is equal to MAXATOMS. This means that some
@@ -357,31 +399,30 @@ int eamForce(SimFlat* s)
 	 * boxes can be computed within a wavefront.
 	 */
 
-	parallel_for_each(
-			boxesExt.tile<MAXATOMS>(), [=](tiled_index<MAXATOMS> t_idx) restrict(amp)
-			{
+	fut = parallel_for_each(tBoxesExt, [=
+					    HCC_ID(U)
+					    HCC_ID(rhobar)
+					    HCC_ID(dfEmbed)
+					    HCC_ID(nAtoms)
+					    HCC_ID(f_values)](tiled_index<1> t_idx) restrict(amp)
+	{
 
-#if NO_OPT
-			int iBox = t_idx.tile[0];
-			int ii = t_idx.local[0];
-#else
-			int ii_local = t_idx.local[0];
-			int iBox = t_idx.tile[0] * (tile_size / max_atoms_in_box) + ii_local / max_atoms_in_box;
-			int ii = ii_local % max_atoms_in_box;
-#endif
-			int iOff = iBox * MAXATOMS;
-			int nIBox = s->boxes->nAtoms[iBox];
+	  int iBox = t_idx.tile[0];
+	  int ii = t_idx.local[0];
+	  int iOff = iBox * MAXATOMS;
+	  int nIBox = nAtoms[iBox];
 
-			if(ii < nIBox)
-			{
-			real_t fEmbed, dfEmbed;
-			interpolateAMP(pot->f, pot->rhobar[iOff + ii], &fEmbed, &dfEmbed);
+	  if(ii < nIBox){
+	    real_t fEmbed, tempdfEmbed;
+	    real_t rhoTmp = rhobar[iOff + ii];
+	    interpolateAMP(f_values, f_x0, f_invDx, f_n, rhoTmp, &fEmbed, &tempdfEmbed);  
 
-			pot->dfEmbed[iOff + ii] = dfEmbed; // save derivative for halo exchange
-			s->atoms->U[iOff + ii] += fEmbed;
-			}
-			}
+	    dfEmbed[iOff + ii] = tempdfEmbed; // save derivative for halo exchange
+	    U[iOff + ii] += fEmbed;
+	  }
+	}
 	);
+	//fut.wait();
 
 	// exchange derivative of the embedding energy with repsect to rhobar
 	startTimer(eamHaloTimer);
@@ -400,77 +441,73 @@ int eamForce(SimFlat* s)
 	 * boxes can be computed within a wavefront.
 	 */
 
-	parallel_for_each(
-			boxesExt.tile<MAXATOMS>(), [=](tiled_index<MAXATOMS> t_idx) restrict(amp)
-			{
+	fut = parallel_for_each(tBoxesExt, [=
+					    HCC_ID(f)
+					    HCC_ID(r)
+					    HCC_ID(dfEmbed)
+					    HCC_ID(nAtoms)
+					    HCC_ID(nbrBoxes)
+					    HCC_ID(rho_values)](tiled_index<1> t_idx) restrict(amp)
+        {
 
-#if NO_OPT
-			int iBox = t_idx.tile[0];
-			int ii = t_idx.local[0];
-#else
-			int ii_local = t_idx.local[0];
-			int iBox = t_idx.tile[0] * (tile_size / max_atoms_in_box) + ii_local / max_atoms_in_box;
-			int ii = ii_local % max_atoms_in_box;
-#endif
-			int iOff = iBox * MAXATOMS;
-			int nIBox = s->boxes->nAtoms[iBox];
+	  int iBox = t_idx.tile[0];
+	  int ii = t_idx.local[0];
+	  int iOff = iBox * MAXATOMS;
+	  int nIBox = nAtoms[iBox];
 
-			// loop over neighbor boxes of iBox (some may be halo boxes)
-			for (int jTmp=0; jTmp<nNbrBoxes; jTmp++)
-			{
-			int jBox = s->boxes->nbrBoxes[iBox][jTmp];
+	  // loop over neighbor boxes of iBox (some may be halo boxes)
+	  for (int jTmp=0; jTmp<nNbrBoxes; jTmp++){
+	    //int jBox = nbrBoxes[iBox][jTmp];
+	    int jBox = nbrBoxes[iBox*nNbrBoxes + jTmp];
 
-			int nJBox = s->boxes->nAtoms[jBox];
-			// loop over atoms in iBox
-			if(ii < nIBox)
-			{
-				// loop over atoms in jBox
-				for (int jOff=MAXATOMS*jBox,ij=0; ij<nJBox; ij++,jOff++)
-				{ 
+	    int nJBox = nAtoms[jBox];
+	    // loop over atoms in iBox
+	    if(ii < nIBox){
+	      // loop over atoms in jBox
+	      for (int jOff=MAXATOMS*jBox,ij=0; ij<nJBox; ij++,jOff++){ 
+		double r2 = 0.0;
+		real3 dr;
+		for (int k=0; k<3; k++){
+		  dr[k]=r[(iOff + ii)*3 + k] - r[jOff*3 + k];
+		  r2+=dr[k]*dr[k];
+		}
+		//if(r2>=rCut2 || r2 <= 0.0) continue;
+		if ( r2 <= rCut2 && r2 > 0.0){ 		      
+		  real_t r_t = sqrt(r2);
+		  real_t rhoTmp, dRho;
+		  interpolateAMP(rho_values, rho_x0, rho_invDx, rho_n, r_t, &rhoTmp, &dRho);   
 
-					double r2 = 0.0;
-					real3 dr;
-					for (int k=0; k<3; k++)
-					{
-						dr[k]=s->atoms->r[iOff + ii][k]-s->atoms->r[jOff][k];
-						r2+=dr[k]*dr[k];
-					}
-					if(r2>=rCut2 || r2 <= 0.0) continue;
-
-					real_t r = sqrt(r2);
-
-					real_t rhoTmp, dRho;
-					interpolateAMP(pot->rho, r, &rhoTmp, &dRho);
-
-					for (int k=0; k<3; k++)
-					{
-						s->atoms->f[iOff + ii][k] -= (pot->dfEmbed[iOff + ii]+pot->dfEmbed[jOff])*dRho*dr[k]/r;
-					}
-
-				} // loop over atoms in jBox
-			} // loop over atoms in iBox
-			} // loop over neighbor boxes
-			} // loop over local boxes
+		  for (int k=0; k<3; k++){
+		    f[(iOff + ii)*3 + k] -= (dfEmbed[iOff + ii] + dfEmbed[jOff])*dRho*dr[k]/r_t;
+		  }
+		}
+	      } // loop over atoms in jBox
+	    } // loop over atoms in iBox
+	  } // loop over neighbor boxes
+	} // loop over local boxes
 	);
+	fut.wait();
 
+	HCC_SYNC(U, s->atoms->U);
+	HCC_SYNC(f, s->atoms->f);
+	HCC_SYNC(rhobar, pot->rhobar);
+	HCC_SYNC(dfEmbed, pot->dfEmbed);	
+	
 	/* A loop over all the atoms is requrired to reduce the ePot value.
 	 * Otherwise, update to ePot is required to be atomic which will 
 	 * lead to slow performance. 
 	 */
-	for (int iBox=0; iBox<s->boxes->nLocalBoxes; iBox++)
-	{
-		int iOff;
-		int nIBox =  s->boxes->nAtoms[iBox];
+	for (int iBox=0; iBox<s->boxes->nLocalBoxes; iBox++){
+	  int iOff;
+	  int nIBox =  s->boxes->nAtoms[iBox];
 
-		// loop over atoms in iBox
-		for (int iOff=MAXATOMS*iBox,ii=0; ii<nIBox; ii++,iOff++)
-		{
-			etot += s->atoms->U[iOff]; 
-		}
+	  // loop over atoms in iBox
+	  for (int iOff=MAXATOMS*iBox,ii=0; ii<nIBox; ii++,iOff++){
+	    etot += s->atoms->U[iOff]; 
+	  }
 	}
 
 	s->ePotential = (real_t) etot;
-
 	return 0;
 }
 
@@ -480,12 +517,9 @@ void eamPrint(FILE* file, BasePotential* pot)
 	fprintf(file, "  Potential type  : EAM\n");
 	fprintf(file, "  Species name    : %s\n", eamPot->name);
 	fprintf(file, "  Atomic number   : %d\n", eamPot->atomicNo);
-	//fprintf(file, "  Mass            : "FMT1" amu\n", eamPot->mass/amuToInternalMass); // print in amu
 	fprintf(file, "  Mass            : %lg amu\n", eamPot->mass/amuToInternalMass); // print in amu
 	fprintf(file, "  Lattice type    : %s\n", eamPot->latticeType);
-	//fprintf(file, "  Lattice spacing : "FMT1" Angstroms\n", eamPot->lat);
 	fprintf(file, "  Lattice spacing : %lg Angstroms\n", eamPot->lat);
-	//fprintf(file, "  Cutoff          : "FMT1" Angstroms\n", eamPot->cutoff);
 	fprintf(file, "  Cutoff          : %lg Angstroms\n", eamPot->cutoff);
 }
 
@@ -614,26 +648,25 @@ void destroyInterpolationObject(InterpolationObject** a)
 /// \param [out] df The interpolated value of df(r)/dr.
 void interpolate(InterpolationObject* table, real_t r, real_t* f, real_t* df)
 {
-	const real_t* tt = table->values; // alias
+  const real_t* tt = table->values; // alias
 
-	if ( r < table->x0 ) r = table->x0;
+  if ( r < table->x0 ) r = table->x0;
+  
+  r = (r-table->x0)*(table->invDx) ;
+  int ii = (int)precise_math::floor(r);
+  if (ii > table->n){
+    ii = table->n;
+    r = table->n / table->invDx;
+  }
+  // reset r to fractional distance
+  r = r - precise_math::floor(r);
+  
+  real_t g1 = tt[ii+1] - tt[ii-1];
+  real_t g2 = tt[ii+2] - tt[ii];
 
-	r = (r-table->x0)*(table->invDx) ;
-	int ii = (int)precise_math::floor(r);
-	if (ii > table->n)
-	{
-		ii = table->n;
-		r = table->n / table->invDx;
-	}
-	// reset r to fractional distance
-	r = r - precise_math::floor(r);
-
-	real_t g1 = tt[ii+1] - tt[ii-1];
-	real_t g2 = tt[ii+2] - tt[ii];
-
-	*f = tt[ii] + 0.5*r*(g1 + r*(tt[ii+1] + tt[ii-1] - 2.0*tt[ii]) );
-
-	*df = 0.5*(g1 + r*(g2-g1))*table->invDx;
+  *f = tt[ii] + 0.5*r*(g1 + r*(tt[ii+1] + tt[ii-1] - 2.0*tt[ii]) );
+  
+  *df = 0.5*(g1 + r*(g2-g1))*table->invDx;
 }
 
 /// Broadcasts an InterpolationObject from rank 0 to all other ranks.

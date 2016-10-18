@@ -382,12 +382,12 @@ int loadAtomsBuffer(void* vparms, void* data, int face, char* charBuf)
       {
          buf[nBuf].gid  = s->atoms->gid[ii];
          buf[nBuf].type = s->atoms->iSpecies[ii];
-         buf[nBuf].rx = s->atoms->r[ii][0] + shift[0];
-         buf[nBuf].ry = s->atoms->r[ii][1] + shift[1];
-         buf[nBuf].rz = s->atoms->r[ii][2] + shift[2];
-         buf[nBuf].px = s->atoms->p[ii][0];
-         buf[nBuf].py = s->atoms->p[ii][1];
-         buf[nBuf].pz = s->atoms->p[ii][2];
+         buf[nBuf].rx = s->atoms->r[ii*3 + 0] + shift[0];
+         buf[nBuf].ry = s->atoms->r[ii*3 + 1] + shift[1];
+         buf[nBuf].rz = s->atoms->r[ii*3 + 2] + shift[2];
+         buf[nBuf].px = s->atoms->p[ii*3 + 0];
+         buf[nBuf].py = s->atoms->p[ii*3 + 1];
+         buf[nBuf].pz = s->atoms->p[ii*3 + 2];
          ++nBuf;
       }
    }
@@ -623,24 +623,24 @@ void sortAtomsInCell(Atoms* atoms, LinkCell* boxes, int iBox)
    {
       tmp[iTmp].gid  = atoms->gid[ii];
       tmp[iTmp].type = atoms->iSpecies[ii];
-      tmp[iTmp].rx =   atoms->r[ii][0];
-      tmp[iTmp].ry =   atoms->r[ii][1];
-      tmp[iTmp].rz =   atoms->r[ii][2];
-      tmp[iTmp].px =   atoms->p[ii][0];
-      tmp[iTmp].py =   atoms->p[ii][1];
-      tmp[iTmp].pz =   atoms->p[ii][2];
+      tmp[iTmp].rx =   atoms->r[ii*3 + 0];
+      tmp[iTmp].ry =   atoms->r[ii*3 + 1];
+      tmp[iTmp].rz =   atoms->r[ii*3 + 2];
+      tmp[iTmp].px =   atoms->p[ii*3 + 0];
+      tmp[iTmp].py =   atoms->p[ii*3 + 1];
+      tmp[iTmp].pz =   atoms->p[ii*3 + 2];
    }
    qsort(&tmp, nAtoms, sizeof(AtomMsg), sortAtomsById);
    for (int ii=begin, iTmp=0; ii<end; ++ii, ++iTmp)
    {
       atoms->gid[ii]   = tmp[iTmp].gid;
       atoms->iSpecies[ii] = tmp[iTmp].type;
-      atoms->r[ii][0]  = tmp[iTmp].rx;
-      atoms->r[ii][1]  = tmp[iTmp].ry;
-      atoms->r[ii][2]  = tmp[iTmp].rz;
-      atoms->p[ii][0]  = tmp[iTmp].px;
-      atoms->p[ii][1]  = tmp[iTmp].py;
-      atoms->p[ii][2]  = tmp[iTmp].pz;
+      atoms->r[ii*3 + 0]  = tmp[iTmp].rx;
+      atoms->r[ii*3 + 1]  = tmp[iTmp].ry;
+      atoms->r[ii*3 + 2]  = tmp[iTmp].rz;
+      atoms->p[ii*3 + 0]  = tmp[iTmp].px;
+      atoms->p[ii*3 + 1]  = tmp[iTmp].py;
+      atoms->p[ii*3 + 2]  = tmp[iTmp].pz;
    }
    
 }
