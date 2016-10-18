@@ -2,17 +2,22 @@
 # User Options
 #===============================================================================
 
-COMPILER    = clang
-OPTIMIZE    = no
-DEBUG       = no
-PROFILE     = no
-MPI         = no
-PAPI        = no
-VEC_INFO    = no
-VERIFY      = no
-BENCHMARK   = no
-BINARY_DUMP = no
-BINARY_READ = no
+COMPILER     = hcc
+MODEL        = hsail
+HCC_ARR_VIEW = no
+OPTIMIZE     = no
+DEBUG        = no
+PROFILE      = no
+MPI          = no
+PAPI         = no
+VEC_INFO     = no
+
+#Does not work for many sizes on the APU, dependent on dedicated GPU memory
+VERIFY       = no
+
+BENCHMARK    = no
+BINARY_DUMP  = no
+BINARY_READ  = no
 
 #===============================================================================
 # Program name & source code list
@@ -21,14 +26,13 @@ BINARY_READ = no
 program = XSBench
 
 source = \
-Main.c \
-io.c \
-CalculateXS.c \
-GridInit.c \
-XSutils.c \
-Materials.c
+Main.cpp \
+io.cpp \
+GridInit.cpp \
+XSutils.cpp \
+Materials.cpp
 
-obj = $(source:.c=.o)
+obj = $(source:.cpp=.o)
 
 #===============================================================================
 # Sets Flags
@@ -40,45 +44,35 @@ CFLAGS := -std=gnu99
 # Linker Flags
 LDFLAGS = -lm
 
-# Regular gcc Compiler
-ifeq ($(COMPILER),gnu)
-  CC = gcc
-  CXX = g++
-  CFLAGS += -fopenmp
-  CXXFLAGS = -fopenmp
-  LDFLAGS += $(CFLAGS)
-endif
+# C++AMP hcc Compiler
+ifeq ($(COMPILER),hcc)
 
-# C++AMP clang Compiler
-ifeq ($(COMPILER),clang)
-  CLAMP_HOME = /opt/hcc
+  ifeq ($(MODEL),lc)
+    #dGPU
+    HCC_HOME = /opt/rocm/hcc-lc
+  else
+  ifeq ($(MODEL),hsail)
+    #APU
+    HCC_HOME = /opt/rocm/hcc-hsail
+  else
+    #assume OLD, pre-ROCM
+    HCC_HOME = /opt/hcc
+  endif
+  endif
+
   INCLUDES = -I.
 
-  CC = $(CLAMP_HOME)/bin/clang
-  CXX = $(CLAMP_HOME)/bin/clang++ -std=c++amp
-  LDFLAGS = $(shell $(CLAMP_HOME)/bin/clamp-config --install --ldflags) -lc -lc++
-  LDLIBS  =  -lpthread -lm -lmpi -ldl -lelf
+  CC = $(HCC_HOME)/bin/hcc
+  LDFLAGS = $(shell $(HCC_HOME)/bin/hcc-config --install --ldflags)
+  LDLIBS  =  -lpthread -lm -lmpi -ldl -lelf -lc -lc++ -fopenmp
 
-  CXXFLAGS = $(shell $(CLAMP_HOME)/bin/clamp-config --install --cxxflags) \
-           -O3 \
-           -DHAVE_AMP \
-	   -Xclang \
-	   -fhsa-ext
+  CFLAGS = -fopenmp -O3 -Wno-parentheses \
+           $(shell $(HCC_HOME)/bin/hcc-config --install --cxxflags)
 
-  CFLAGS = -O3 \
-           -DHAVE_AMP
+  ifeq ($(HCC_ARR_VIEW),yes)
+    CFLAGS += -DARRAY_VIEW
+  endif
 
-endif
-
-# Intel Compiler
-ifeq ($(COMPILER),intel)
-  CC = icc
-  CFLAGS += -openmp 
-endif
-
-# BG/Q gcc Cross-Compiler
-ifeq ($(MACHINE),bluegene)
-  CC = mpicc
 endif
 
 # Debug Flags
@@ -150,13 +144,10 @@ endif
 #===============================================================================
 
 $(program): $(obj) XSbench_header.h
-	$(CXX) $(LDFLAGS) -o $@ $(obj) $(LDLIBS)
-
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(LDFLAGS) -o $@ $(obj) $(LDLIBS)
 
 %.o: %.cpp
-	$(CXX) $(INCLUDES) $(CXXFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
 	rm -rf $(program) $(obj)

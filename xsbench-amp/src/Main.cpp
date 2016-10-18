@@ -1,5 +1,5 @@
 /*******************************************************************************
-Copyright (c) 2015 Advanced Micro Devices, Inc. 
+Copyright (c) 2016 Advanced Micro Devices, Inc. 
 
 All rights reserved.
 
@@ -34,326 +34,380 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include<mpi.h>
 #endif
 
-#ifdef HAVE_AMP
-#include <amp.h>
-using namespace concurrency;
-#define BLOCKSIZE 2048
-#define WGSIZE 256
+#ifdef ARRAY_VIEW
+#define HCC_ARRAY_STRUC(type, name, size, ptr) array_view<type> name(size, ptr)
+#define HCC_ID(name)
+#define HCC_SYNC(name, ptr) name.synchronize()
+#else
+#define HCC_ARRAY_STRUC(type, name, size, ptr) array<type> name(size); copy(ptr, name)
+#define HCC_ID(name) ,&name
+#define HCC_SYNC(name, ptr) copy(name, ptr)
 #endif
 
-static void sort(double *energy, int *mat, unsigned low, unsigned high)
+#include <hc.hpp>
+using namespace hc;
+
+int main( int argc, char* argv[] )
 {
-	if (low >= high)
-		return;
-	const unsigned old_lo = low, old_hi = high;
-	const double pivot = energy[(high + low + 1) / 2];
-	while(low < high) {
-		while (energy[low] < pivot)
-			++low;
-		while (energy[high] > pivot)
-			--high;
-		if (low < high) {
-			std::swap(energy[low], energy[high]);
-//			std::swap(mat[low], mat[high]);
-			++low; --high;
-		}
-	}
-	sort(energy, mat, old_lo, low - 1);
-	sort(energy, mat, low, old_hi);
-}
-
-
-
-extern "C" int main( int argc, char* argv[] )
-{
-	// =====================================================================
-	// Initialization & Command Line Read-In
-	// =====================================================================
-	int version = 13;
-	int mype = 0;
-	#ifndef HAVE_AMP
-	int max_procs = omp_get_num_procs();
-	int thread, mat;
-	#endif	
-	int i;
-	unsigned long seed;
-	#ifndef HAVE_AMP
-	double omp_start, omp_end, p_energy;
-	#endif
-	double timer_start, timer_end;
-	unsigned long long vhash = 0;
-	int nprocs;
+  // =====================================================================
+  // Initialization & Command Line Read-In
+  // =====================================================================
+  int version = 13;
+  int mype = 0;
+  int i;
+  unsigned long seed;
+  double timer_start, timer_end;
+  unsigned long long vhash = 0;
+  int nprocs;
+  int nuc_size = 0;  
 	
-	#ifdef DOMPI
-	MPI_Status stat;
-	MPI_Init(&argc, &argv);
-	MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
-	MPI_Comm_rank(MPI_COMM_WORLD, &mype);
-	#endif
+#ifdef DOMPI
+  MPI_Status stat;
+  MPI_Init(&argc, &argv);
+  MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
+  MPI_Comm_rank(MPI_COMM_WORLD, &mype);
+#endif
 	
-	// rand() is only used in the serial initialization stages.
-	// A custom RNG is used in parallel portions.
-	#ifdef VERIFICATION
-	srand(26);
-	#else
-	srand(time(NULL));
-	#endif
+  // rand() is only used in the serial initialization stages.
+  // A custom RNG is used in parallel portions.
+#ifdef VERIFICATION
+  srand(26);
+#else
+  srand(time(NULL));
+#endif
 
-	// Process CLI Fields -- store in "Inputs" structure
-	Inputs in = read_CLI( argc, argv );
+  // Process CLI Fields -- store in "Inputs" structure
+  Inputs in = read_CLI( argc, argv );
 	
-	// Set number of OpenMP Threads
-	#ifndef HAVE_AMP
-	omp_set_num_threads(in.nthreads);
-	#endif
+  // Print-out of Input Summary
+  if( mype == 0 )
+    print_inputs( in, nprocs, version );
 
-	// Print-out of Input Summary
-	if( mype == 0 )
-		print_inputs( in, nprocs, version );
+  // =====================================================================
+  // Prepare Nuclide Energy Grids, Unionized Energy Grid, & Material Data
+  // =====================================================================
+  NuclideGridPoint * nuclide_grids = NULL;
 
-	// =====================================================================
-	// Prepare Nuclide Energy Grids, Unionized Energy Grid, & Material Data
-	// =====================================================================
-	NuclideGridPoint ** nuclide_grids = NULL;
-
-	// Allocate & fill energy grids
-	#ifndef BINARY_READ
-	if( mype == 0) printf("Generating Nuclide Energy Grids...\n");
+  // Allocate & fill energy grids
+#ifndef BINARY_READ
+  if( mype == 0) printf("Generating Nuclide Energy Grids...\n");
 	
-	nuclide_grids = gpmatrix(in.n_isotopes,in.n_gridpoints);
+  nuclide_grids = gpmatrix(in.n_isotopes,in.n_gridpoints);
 	
-	#ifdef VERIFICATION
-	generate_grids_v( nuclide_grids, in.n_isotopes, in.n_gridpoints );	
-	#else
-	generate_grids( nuclide_grids, in.n_isotopes, in.n_gridpoints );	
-	#endif
+#ifdef VERIFICATION
+  generate_grids_v( nuclide_grids, in.n_isotopes, in.n_gridpoints );	
+#else
+  generate_grids( nuclide_grids, in.n_isotopes, in.n_gridpoints );	
+#endif
 	
-	// Sort grids by energy
-	if( mype == 0) printf("Sorting Nuclide Energy Grids...\n");
-	sort_nuclide_grids( nuclide_grids, in.n_isotopes, in.n_gridpoints );
-	#endif
+  // Sort grids by energy
+  if( mype == 0) printf("Sorting Nuclide Energy Grids...\n");
+  sort_nuclide_grids( nuclide_grids, in.n_isotopes, in.n_gridpoints );
+#endif
 
-	// Prepare Unionized Energy Grid Framework
-	#ifndef BINARY_READ
-	GridPoint * energy_grid = generate_energy_grid( in.n_isotopes,
-	                          in.n_gridpoints, nuclide_grids ); 	
-	#else
-	nuclide_grids = gpmatrix(in.n_isotopes,in.n_gridpoints);
-	GridPoint * energy_grid = (GridPoint *)malloc( in.n_isotopes *
-	                           in.n_gridpoints * sizeof( GridPoint ) );
-	int * index_data = (int *) malloc( in.n_isotopes * in.n_gridpoints
-	                   * in.n_isotopes * sizeof(int));
-	for( i = 0; i < in.n_isotopes*in.n_gridpoints; i++ )
-		energy_grid[i].xs_ptrs = &index_data[i*in.n_isotopes];
-	#endif
+  // Prepare Unionized Energy Grid Framework
+#ifndef BINARY_READ
+  GridPoint * energy_grid = generate_energy_grid( in.n_isotopes,
+						  in.n_gridpoints, nuclide_grids ); 	
+#else
+  nuclide_grids = gpmatrix(in.n_isotopes,in.n_gridpoints);
 
-	// Double Indexing. Filling in energy_grid with pointers to the
-	// nuclide_energy_grids.
-	#ifndef BINARY_READ
-	set_grid_ptrs( energy_grid, nuclide_grids, in.n_isotopes, in.n_gridpoints );
-	#endif
-
-	#ifdef BINARY_READ
-	if( mype == 0 ) printf("Reading data from \"%s\" file...\n",
-	                       in.filename);
-	binary_read(in.n_isotopes, in.n_gridpoints, nuclide_grids, energy_grid,
-	            in.filename);
-	#endif
+  GridPoint * energy_grid = new GridPoint[in.n_isotopes * in.n_gridpoints];
+  int * index_data = new int[in.n_isotopes * in.n_gridpoints * in.n_isotopes];
 	
-	// Get material data
-	if( mype == 0 )
-		printf("Loading Mats...\n");
-	int *num_nucs  = load_num_nucs(in.n_isotopes);
-	int **mats     = load_mats(num_nucs, in.n_isotopes);
+  for( i = 0; i < in.n_isotopes*in.n_gridpoints; i++ )
+    energy_grid[i].xs_ptrs = &index_data[i*in.n_isotopes];
+  
+#endif
 
-	#ifdef VERIFICATION
-	double **concs = load_concs_v(num_nucs);
-	#else
-	double **concs = load_concs(num_nucs);
-	#endif
+  // Double Indexing. Filling in energy_grid with pointers to the
+  // nuclide_energy_grids.
+#ifndef BINARY_READ
+  set_grid_ptrs( energy_grid, nuclide_grids, in.n_isotopes, in.n_gridpoints );
+#endif
 
-	#ifdef BINARY_DUMP
-	if( mype == 0 ) printf("Dumping data to binary file...\n");
-	binary_dump(in.n_isotopes, in.n_gridpoints, nuclide_grids, energy_grid);
-	if( mype == 0 ) printf("Binary file \"XS_data.dat\" written! Exiting...\n");
-	return 0;
-	#endif
-
-	// =====================================================================
-	// Cross Section (XS) Parallel Lookup Simulation Begins
-	// =====================================================================
-
-	if( mype == 0 )
-	{
-		printf("\n");
-		border_print();
-		center_print("SIMULATION", 79);
-		border_print();
-	}
-
-	//initialize papi with one thread (master) here
-	#ifdef PAPI
-	if ( PAPI_library_init(PAPI_VER_CURRENT) != PAPI_VER_CURRENT){
-		fprintf(stderr, "PAPI library init error!\n");
-		exit(1);
-	}
-	#endif
-
-        #ifdef VERIFICATION
-	verifyStruct * verifyArray =
-	  (verifyStruct *) malloc(in.lookups * sizeof(verifyStruct));
-	#endif
+#ifdef BINARY_READ
+  if( mype == 0 ) printf("Reading data from \"%s\" file...\n",
+			 in.filename);
+  binary_read(in.n_isotopes, in.n_gridpoints, nuclide_grids, energy_grid,
+	      in.filename);
+#endif
 	
-	#ifndef HAVE_AMP
-	#ifdef VERIFICATION
-        #pragma omp parallel default(none)		\
-	private(i, thread, p_energy, mat, seed) \
-	shared( max_procs, in, energy_grid, nuclide_grids, \
-	        mats, concs, num_nucs, mype, vhash, verifyArray) 
-	{
-	#else
-	#pragma omp parallel default(none) \
-	private(i, thread, p_energy, mat, seed) \
-	shared( max_procs, in, energy_grid, nuclide_grids, \
-	        mats, concs, num_nucs, mype, vhash) 
-	{
-        #endif //VERIFICATION
-        #endif //HAVE_AMP
+  // Get material data
+  if( mype == 0 )
+    printf("Loading Mats...\n");
+
+  int *num_nucs  = load_num_nucs(in.n_isotopes);
+	
+  int *num_nucs_idx = new int[12];
+  for(int i = 0; i < 12; i++){
+    num_nucs_idx[i] = nuc_size;
+    nuc_size += num_nucs[i];
+  }
+
+  int *mats     = load_mats(num_nucs, in.n_isotopes, num_nucs_idx);
+
+#ifdef VERIFICATION
+  double *concs = load_concs_v(num_nucs);
+#else
+  double *concs = load_concs(num_nucs);
+#endif
+
+#ifdef BINARY_DUMP
+  if( mype == 0 ) printf("Dumping data to binary file...\n");
+  binary_dump(in.n_isotopes, in.n_gridpoints, nuclide_grids, energy_grid);
+  if( mype == 0 ) printf("Binary file \"XS_data.dat\" written! Exiting...\n");
+  return 0;
+#endif
+
+  // =====================================================================
+  // Cross Section (XS) Parallel Lookup Simulation Begins
+  // =====================================================================
+
+  if( mype == 0 ){
+    printf("\n");
+    border_print();
+    center_print("SIMULATION", 79);
+    border_print();
+  }
+
+  //initialize papi with one thread (master) here
+#ifdef PAPI
+  if ( PAPI_library_init(PAPI_VER_CURRENT) != PAPI_VER_CURRENT){
+    fprintf(stderr, "PAPI library init error!\n");
+    exit(1);
+  }
+#endif
+
+			
+  // Initialize parallel PAPI counters
+#ifdef PAPI
+  int eventset = PAPI_NULL; 
+  int num_papi_events;
+  {
+    counter_init(&eventset, &num_papi_events);
+  }
+#endif
+	
+  seed = 13; 
+  int n_isotopes_t = in.n_isotopes;
+  int n_gridpoints_t = in.n_gridpoints;
+	
+  int * pickedMats = new int[in.lookups];
+  double * pickedP_energy = new double[in.lookups];
+  double * energy_grid_energy = new double[in.n_isotopes*in.n_gridpoints];
+  int * energy_grid_xs = new int[in.n_isotopes*in.n_gridpoints*in.n_isotopes];
+
+  timer_start = timer();
+	
+  for(int i = 0; i< in.n_isotopes*in.n_gridpoints; ++i){
+    energy_grid_energy[i] = energy_grid[i].energy;
+    for(int j = 0; j < in.n_isotopes; ++j){
+      energy_grid_xs[i*in.n_isotopes + j] = energy_grid[i].xs_ptrs[j];
+    }
+  }
 		
-	// Initialize parallel PAPI counters
-        #ifdef PAPI
-	int eventset = PAPI_NULL; 
-	int num_papi_events;
-	{
-	  counter_init(&eventset, &num_papi_events);
-	}
-        #endif
-	
-        #ifndef HAVE_AMP
-	thread = omp_get_thread_num();
-	seed   = (thread+1)*19+17;
-        #else
-	seed = 13; 
-        #endif
-	
-	int * pickedMats = (int *) malloc(in.lookups * sizeof(int));
-	double * pickedP_energy = (double *) malloc(in.lookups * sizeof(double));
-        #ifdef VERIFICATION	
-	for(int j = 0; j < in.lookups; ++j){	  
-	  pickedP_energy[j] = rn_v();
-	  pickedMats[j] = pick_mat(&seed); 
-	}
-        #else
-	for(int j = 0; j < in.lookups; ++j){
-	  pickedP_energy[j] = rn(&seed);
-	  pickedMats[j] = pick_mat(&seed); 
-	}
-        #endif
+#ifdef VERIFICATION
+  double * verify_p_energy = new double[in.lookups];
+  int * verify_mat = new int[in.lookups];
+  double * verify_macro_xs_vector = new double[in.lookups * 5];
 
-	timer_start = timer();
+  HCC_ARRAY_STRUC(double, verify_p_energy_t, in.lookups, verify_p_energy);
+  HCC_ARRAY_STRUC(int, verify_mat_t, in.lookups, verify_mat);
+  HCC_ARRAY_STRUC(double, verify_macro_xs_vector_t, in.lookups*5, verify_macro_xs_vector);
+  
+  for(int j = 0; j < in.lookups; ++j){	  
+    pickedP_energy[j] = rn_v();
+    pickedMats[j] = pick_mat(&seed); 
+  }
+	
+#else
+  double * check = new double[1];  
+  HCC_ARRAY_STRUC(double, check_t, 1, check);
+  
+  for(int j = 0; j < in.lookups; ++j){
+    pickedP_energy[j] = rn(&seed);
+    pickedMats[j] = pick_mat(&seed); 
+  }
+	
+#endif //VERIFICATION
 
-	#ifndef HAVE_AMP
-        #pragma omp for schedule(dynamic)
-	for( i = 0; i < in.lookups; i++ )
-	{
-	#else
-	double check = 0.0;
-	parallel_for_each(extent<1>(in.lookups),[=, &check] (index<1> idx) restrict(amp){
-	    int i = idx[0];
-        #endif
-	    // Randomly pick an energy and material for the particle
-	    int mat;
-	    double p_energy;
-	    double macro_xs_vector[5];	    
+  HCC_ARRAY_STRUC(int, pickedMats_t, in.lookups, pickedMats);
+  HCC_ARRAY_STRUC(double, pickedP_energy_t, in.lookups, pickedP_energy);
+  HCC_ARRAY_STRUC(double, energy_grid_energy_t, in.n_isotopes*in.n_gridpoints, energy_grid_energy);
+  HCC_ARRAY_STRUC(int, energy_grid_xs_t, in.n_isotopes*in.n_gridpoints*in.n_isotopes, energy_grid_xs);
+  HCC_ARRAY_STRUC(NuclideGridPoint, nuclide_grids_t, in.n_isotopes*in.n_gridpoints, nuclide_grids);
+  HCC_ARRAY_STRUC(int, num_nucs_t, 12, num_nucs);
+  HCC_ARRAY_STRUC(int, num_nucs_idx_t, 12, num_nucs_idx);
+  HCC_ARRAY_STRUC(double, concs_t, nuc_size, concs);
+  HCC_ARRAY_STRUC(int, mats_t, nuc_size, mats);  
+	
+  completion_future fut = parallel_for_each(extent<1>(in.lookups),[=
+                                                                   HCC_ID(pickedMats_t)
+								   HCC_ID(pickedP_energy_t)
+								   HCC_ID(energy_grid_energy_t)
+								   HCC_ID(energy_grid_xs_t)
+								   HCC_ID(nuclide_grids_t)
+								   HCC_ID(num_nucs_t)
+								   HCC_ID(num_nucs_idx_t)
+								   HCC_ID(concs_t)
+								   HCC_ID(mats_t)
+                                                                   #ifdef VERIFICATION
+                                                                   HCC_ID(verify_p_energy_t)
+								   HCC_ID(verify_mat_t)
+								   HCC_ID(verify_macro_xs_vector_t)
+								   #else
+								   HCC_ID(check_t)
+								   #endif
+								   ] (index<1> idx) restrict(amp){
+      int i = idx[0];
+      int mat;
+      double p_energy;
+      double macro_xs_vector[5];	    
+
+      long index = 0;	
+      double xs_vector[5];
+      int p_nuc; 
+      double conc; 
+
+      long lowerLimit = 0;
+      long upperLimit = n_isotopes_t*n_gridpoints_t - 1;
+      long examinationPoint;
+      long length = upperLimit - lowerLimit;
 	    
-	    mat = pickedMats[i];
-	    p_energy = pickedP_energy[i]; 
-	    
-	    // debugging
-	    //printf("E = %lf mat = %d\n", p_energy, mat);
-	    
-	    // This returns the macro_xs_vector, but we're not going
-	    // to do anything with it in this program, so return value
-	    // is written over.
-	    calculate_macro_xs( p_energy, mat, in.n_isotopes,
-				in.n_gridpoints, num_nucs, concs,
-				energy_grid,
-				nuclide_grids,
-				mats,
-				macro_xs_vector );
-	    // Make sure the code is not DCE
-	    if (i == 0)
-		    check += macro_xs_vector[0] + macro_xs_vector[1] +
-		             macro_xs_vector[2] + macro_xs_vector[3] +
-		             macro_xs_vector[4];
-	    
-	    // Verification hash calculation
-	    // This method provides a consistent hash across
-	    // architectures and compilers.
-	    
-        #ifdef VERIFICATION
-	    verifyArray[i].p_energy = p_energy;
-	    verifyArray[i].mat = mat;
-	    verifyArray[i].macro_xs_vector[0] = macro_xs_vector[0];
-	    verifyArray[i].macro_xs_vector[1] = macro_xs_vector[1];
-	    verifyArray[i].macro_xs_vector[2] = macro_xs_vector[2];
-	    verifyArray[i].macro_xs_vector[3] = macro_xs_vector[3];
-	    verifyArray[i].macro_xs_vector[4] = macro_xs_vector[4];	
-        #endif
-        #ifndef HAVE_AMP
-	  }
-	#else
-	  });	       
-	#endif
-	
-	timer_end = timer();
-	// Prints out thread local PAPI counters
-        #ifdef PAPI
-	if( mype == 0 && thread == 0 )
-	  {
-	    printf("\n");
-	    border_print();
-	    center_print("PAPI COUNTER RESULTS", 79);
-	    border_print();
-	    printf("Count          \tSmybol      \tDescription\n");
-	  }
-	counter_stop(&eventset, num_papi_events);
-        #endif
+      mat = pickedMats_t[i];
+      p_energy = pickedP_energy_t[i];
 
-	#ifndef HAVE_AMP
+      for( int k = 0; k < 5; k++ )
+	macro_xs_vector[k] = 0;
+
+      //idx = grid_search( n_isotopes * n_gridpoints, p_energy,
+      //		 energy_grid_energy);
+
+      while( length > 1 ){
+	examinationPoint = lowerLimit + ( length / 2 );
+		    
+	if( energy_grid_energy_t[examinationPoint] > p_energy )
+	  upperLimit = examinationPoint;
+	else
+	  lowerLimit = examinationPoint;
+		    
+	length = upperLimit - lowerLimit;
+      }
+      index = lowerLimit;
+
+      for( int k = lowerLimit; k < upperLimit; k++ ){
+	if( energy_grid_energy_t[k] <= p_energy )
+	  index = k;
+	else
+	  break;
+      }
+
+      for( int j = 0; j < num_nucs_t[mat]; j++ ){
+	p_nuc = mats_t[num_nucs_idx_t[mat] + j];
+	conc = concs_t[num_nucs_idx_t[mat] + j];
+	//calculate_micro_xs( p_energy, p_nuc, n_isotopes,
+	//		      n_gridpoints, energy_grid_energy,
+	//		      energy_grid_xs,
+	//		      nuclide_grids, index, xs_vector );
+
+	double f;
+	NuclideGridPoint low, high;
+
+	if( energy_grid_xs_t[index*n_isotopes_t + p_nuc] == n_gridpoints_t - 1 ){
+	  low = nuclide_grids_t[p_nuc*n_gridpoints_t + energy_grid_xs_t[index*n_isotopes_t + p_nuc] - 1];
+	  high = nuclide_grids_t[p_nuc*n_gridpoints_t + energy_grid_xs_t[index*n_isotopes_t + p_nuc]];
 	}
-	#endif
-	
-        #ifdef VERIFICATION
-	for(int i = 0; i < in.lookups; ++i){
-	  char line[256];
-	  sprintf(line, "%.5lf %d %.5lf %.5lf %.5lf %.5lf %.5lf",
-		  verifyArray[i].p_energy, verifyArray[i].mat,
-		  verifyArray[i].macro_xs_vector[0],
-		  verifyArray[i].macro_xs_vector[1],
-		  verifyArray[i].macro_xs_vector[2],
-		  verifyArray[i].macro_xs_vector[3],
-		  verifyArray[i].macro_xs_vector[4]);
-	          vhash += hash((unsigned char*)line, 10000);
+	else{
+	  low = nuclide_grids_t[p_nuc*n_gridpoints_t + energy_grid_xs_t[index*n_isotopes_t + p_nuc]];
+	  high = nuclide_grids_t[p_nuc*n_gridpoints_t + energy_grid_xs_t[index*n_isotopes_t + p_nuc] + 1];
 	}
-        #endif
+
+	f = (high.energy - p_energy) /
+	    (high.energy - low.energy);
+	xs_vector[0] = high.total_xs - f *
+	    (high.total_xs - low.total_xs);	
+	xs_vector[1] = high.elastic_xs - f *
+	    (high.elastic_xs - low.elastic_xs);
+	xs_vector[2] = high.absorbtion_xs - f *
+	    (high.absorbtion_xs - low.absorbtion_xs);
+	xs_vector[3] = high.fission_xs - f *
+	    (high.fission_xs - low.fission_xs);
+	xs_vector[4] = high.nu_fission_xs - f *
+	  (high.nu_fission_xs - low.nu_fission_xs);
+
+	for( int k = 0; k < 5; k++ )
+	  macro_xs_vector[k] += xs_vector[k] * conc;
+      }
+
+#ifndef VERIFICATION
+      if (i == 0)
+	check_t[0] = macro_xs_vector[0] + macro_xs_vector[1] +
+	  macro_xs_vector[2] + macro_xs_vector[3] +
+	  macro_xs_vector[4];
+#else
+      // Verification hash calculation
+      // This method provides a consistent hash across
+      // architectures and compilers.
+      verify_p_energy_t[i] = p_energy;
+      verify_mat_t[i] = mat;
+      verify_macro_xs_vector_t[i*5 + 0] = macro_xs_vector[0];
+      verify_macro_xs_vector_t[i*5 + 1] = macro_xs_vector[1];
+      verify_macro_xs_vector_t[i*5 + 2] = macro_xs_vector[2];
+      verify_macro_xs_vector_t[i*5 + 3] = macro_xs_vector[3];
+      verify_macro_xs_vector_t[i*5 + 4] = macro_xs_vector[4];
+#endif
+
+    });
+  fut.wait();  
+  timer_end = timer();
+  
+  // Prints out thread local PAPI counters
+#ifdef PAPI
+  if( mype == 0 && thread == 0 ){
+    printf("\n");
+    border_print();
+    center_print("PAPI COUNTER RESULTS", 79);
+    border_print();
+    printf("Count          \tSmybol      \tDescription\n");
+  }
+  counter_stop(&eventset, num_papi_events);
+#endif
 	
-	#ifndef PAPI
-	if( mype == 0)	
-	{	
-	  printf("\n" );
-	  printf("Simulation complete.\n" );
-	}
-	#endif
-
+#ifndef VERIFICATION
+  HCC_SYNC(check_t, check);
+  vhash = check[0];
+#else
+  HCC_SYNC(verify_p_energy_t, verify_p_energy);
+  HCC_SYNC(verify_mat_t, verify_mat);
+  HCC_SYNC(verify_macro_xs_vector_t, verify_macro_xs_vector);
+  
+  for(int i = 0; i < in.lookups; ++i){
+    char line[256];
+    sprintf(line, "%.5lf %d %.5lf %.5lf %.5lf %.5lf %.5lf",
+	    verify_p_energy[i], verify_mat[i],
+	    verify_macro_xs_vector[i*5 + 0],
+	    verify_macro_xs_vector[i*5 + 1],
+	    verify_macro_xs_vector[i*5 + 2],
+	    verify_macro_xs_vector[i*5 + 3],
+	    verify_macro_xs_vector[i*5 + 4]);
+    vhash += hash((unsigned char*)line, 10000);
+  }
+#endif
 	
-	// Print / Save Results and Exit
+#ifndef PAPI
+  if( mype == 0)	{	
+    printf("\n" );
+    printf("Simulation complete.\n" );
+  }
+#endif
+	
+  // Print / Save Results and Exit
+  print_results( in, mype, timer_end-timer_start, nprocs, vhash );
 
-        print_results( in, mype, timer_end-timer_start, nprocs, vhash );
-
-	#ifdef DOMPI
-	MPI_Finalize();
-	#endif
-
-	return 0;
+#ifdef DOMPI
+  MPI_Finalize();
+#endif
+	
+  return 0;
 }

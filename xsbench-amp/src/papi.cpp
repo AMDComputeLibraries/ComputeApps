@@ -1,5 +1,5 @@
 /*******************************************************************************
-Copyright (c) 2015 Advanced Micro Devices, Inc. 
+Copyright (c) 2016 Advanced Micro Devices, Inc. 
 
 All rights reserved.
 
@@ -28,6 +28,7 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 *******************************************************************************/
+
 #include "XSbench_header.h"
 
 void counter_init( int *eventset, int *num_papi_events )
