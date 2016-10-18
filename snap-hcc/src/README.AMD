@@ -1,0 +1,240 @@
+This SNAP code is ported to AMD's HCC programming environment to support 
+execution on accelerator devices, specifically GPU's.
+
+This HCC port started with the OpenCL C code contributed by Tom Deakin of
+the University of Bristol.  That code is found at:
+https://github.com/UoB-HPC/SNAP_MPI_OpenCL
+
+Minor modifications are made to the code before the HCC porting effort.
+These changes include adding a inner loop counter and print statement to more
+closely match the original SNAP fortran code, resolving an issue with
+correctness of the first iteration, and arranging some parameter defaults to
+more closely match the original fortran.  All of these changes were primarily
+for valiadation purposes so that the OpenCL output would match the fortran
+output for a nearly matching input file.   After these changes, it is possible
+to directly compare the OpenCL output to the Fortran output.
+
+Next the code was ported to the AMD HCC environment.
+
+These ports parallelize and offload key parts of the SNAP program,
+including the dim3 sweep inner loop, scalar flux and moment calculations, 
+and inner and outer source computations.
+
+The compiler used is an experimental clang compiler.  This compiler accepts
+HCC (c++amp) and emits code suitable for a GPU target device, in particular AMD
+APUs and recent AMD discrete GPUs.  The compiler revision in use at the time of
+writing is from package hcc_hsail 0.10.16253-6ceea64-ec648b0.
+
+The primary GPU work arrangement is to run the xyz space coordinates at the
+team level, and groups*angles at the thread level.
+
+Reductions are fully working on a workgroup basis.   The reductions are all
+computed accross the number of angles.  Since the code inplements these
+reductions only across a workgroup, the NANG parameter is limited to the size
+of a workgroup, which is 1024.
+
+
+The Makefile builds on our AMD system just by typing "make" and builds the 
+target exe snap.
+To run, we use the command:
+snap snap_input
+
+Sample output:
+ SNAP: SN (Discrete Ordinates) Application Proxy
+ MPI+HCC port
+ Run on Wed Aug 17 09:36:10 2016
+
+
+********************************************************
+  Input Parameters
+********************************************************
+ Geometry
+   Problem size:                  0.100 x 0.100 x 0.100
+   Cells:                             8 x     8 x     8
+   Cell size:                     0.013 x 0.013 x 0.013
+
+ Discrete Ordinates
+   Angles per octant:             64
+   Moments:                       2
+   "Computational" moments:       4
+
+ Energy groups
+   Number of groups:              30
+
+ Timesteps
+   Timesteps:                     10
+   Simulation time:               0.100
+   Time delta:                    0.010
+
+ Iterations
+   Max outers per timestep:       10
+   Max inners per outer:          5
+   Stopping criteria
+     Inner convergence:           1.00E-04
+     Outer convergence:           1.00E-02
+
+ MPI decomposition
+   Rank layout:                   1 x 1 x 1
+   Chunk size:                    8
+
+device : AMD HSA Agent Kaveri0
+tile static memory: 65536
+required memory: 131MB
+********************************************************
+  Iteration Monitor
+********************************************************
+ Timestep 0
+   Outer      Difference      Inners
+     0         5.0678e-02      3
+     1         4.1302e-02      3
+     2         7.4568e-04      2
+
+  Timestep=    0   No. Outers=    3    No. Inners=  196
+
+   Population: 0.00
+
+ Timestep 1
+   Outer      Difference      Inners
+     0         7.2102e-02      3
+     1         2.9102e-02      2
+     2         4.3693e-04      2
+
+  Timestep=    1   No. Outers=    3    No. Inners=  195
+
+   Population: 0.00
+
+ Timestep 2
+   Outer      Difference      Inners
+     0         6.8614e-02      3
+     1         1.9153e-02      2
+     2         2.3149e-04      2
+
+  Timestep=    2   No. Outers=    3    No. Inners=  195
+
+   Population: 0.00
+
+ Timestep 3
+   Outer      Difference      Inners
+     0         6.7457e-02      3
+     1         1.6605e-02      2
+     2         1.8773e-04      2
+
+  Timestep=    3   No. Outers=    3    No. Inners=  195
+
+   Population: 0.00
+
+ Timestep 4
+   Outer      Difference      Inners
+     0         6.6755e-02      3
+     1         1.6078e-02      2
+     2         1.9246e-04      2
+
+  Timestep=    4   No. Outers=    3    No. Inners=  195
+
+   Population: 0.00
+
+ Timestep 5
+   Outer      Difference      Inners
+     0         6.4709e-02      3
+     1         1.5481e-02      2
+     2         1.8692e-04      2
+
+  Timestep=    5   No. Outers=    3    No. Inners=  195
+
+   Population: 0.00
+
+ Timestep 6
+   Outer      Difference      Inners
+     0         6.4372e-02      3
+     1         1.6188e-02      2
+     2         1.9009e-04      2
+
+  Timestep=    6   No. Outers=    3    No. Inners=  195
+
+   Population: 0.00
+
+ Timestep 7
+   Outer      Difference      Inners
+     0         6.6715e-02      3
+     1         1.5658e-02      2
+     2         1.8843e-04      2
+
+  Timestep=    7   No. Outers=    3    No. Inners=  195
+
+   Population: 0.00
+
+ Timestep 8
+   Outer      Difference      Inners
+     0         6.7384e-02      3
+     1         1.5943e-02      2
+     2         1.8962e-04      2
+
+  Timestep=    8   No. Outers=    3    No. Inners=  195
+
+   Population: 0.00
+
+ Timestep 9
+   Outer      Difference      Inners
+     0         6.7405e-02      3
+     1         1.5835e-02      2
+     2         1.8873e-04      2
+
+  Timestep=    9   No. Outers=    3    No. Inners=  194
+
+   Population: 0.00
+
+
+********************************************************
+  Timing Report
+********************************************************
+ Setup                           0.020s
+ Outer source                    0.000s
+ Outer parameters                0.000s
+ Inner source                    0.000s
+ Sweeps                          5.208s
+   MPI Send time                 0.000s
+   MPI Recv time                 0.076s
+   PCIe transfer time            0.000s
+   Compute time                  5.132s
+ Scalar flux reductions          0.000s
+ Convergence checking            0.013s
+ Other                           2.223s
+ Total simulation                7.444s
+
+ Grind time                     13.332ns
+********************************************************
+
+snap_input:
+! Input from namelist
+&invar
+   nthreads=1
+   nnested=1
+   npex=1
+   npey=1
+   npez=1
+   ndimen=3
+   nx=8
+   lx=0.1
+   ny=8
+   ly=0.1
+   nz=8
+   lz=0.1
+   ichunk=8
+   nmom=2
+   nang=64
+   ng=30
+   mat_opt=0
+   src_opt=0
+   timedep=1
+   it_det=0
+   tf=0.1
+   nsteps=10
+   iitm=5
+   oitm=10
+   epsi=1.E-4
+   fluxp=0
+   scatp=0
+   fixup=1
+   angcpy=2
+/
+
