@@ -1,3 +1,33 @@
+/*******************************************************************************
+Copyright (c) 2016 Advanced Micro Devices, Inc. 
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice, 
+this list of conditions and the following disclaimer in the documentation 
+and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+may be used to endorse or promote products derived from this software without
+specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*******************************************************************************/
 //------------------------------------------------------------------------------------------------------------------------------
 // Copyright Notice 
 //------------------------------------------------------------------------------------------------------------------------------
@@ -40,22 +70,38 @@
 #include <omp.h>
 #endif
 //------------------------------------------------------------------------------------------------------------------------------
+#include "timers.h"
 #include "defines.h"
 #include "level.h"
 #include "mg.h"
 #include "operators.h"
 #include "solvers.h"
 //------------------------------------------------------------------------------------------------------------------------------
+#ifdef GPU_ARRAY_VIEW
+#if defined(__KALMAR_AMP__) || defined(__HCC_AMP__)
+#include <amp.h>
+#include <amp_math.h>
+#include <iostream>
+using namespace Concurrency;
+#elif defined(__KALMAR_HC__) || defined(__HCC_HC__)
+#include <hc.hpp>
+#include <hc_math.hpp>
+#include <iostream>
+using namespace hc;
+#else
+#error Missing predefine when GPU_ARRAY_VIEW is defined.  Has compiler changed?
+#endif // predefines
+
+#endif // GPU_ARRAY_VIEW
 void bench_hpgmg(mg_type *all_grids, int onLevel, double a, double b, double dtol, double rtol){
      int     doTiming;
-//     int    minSolves = 10; // do at least minSolves MGSolves
      int    minSolves = 10; // do at least minSolves MGSolves
   double timePerSolve = 0;
 
   for(doTiming=0;doTiming<=1;doTiming++){ // first pass warms up, second pass times
 
     #ifdef USE_HPM // IBM performance counters for BGQ...
-    if(doTiming)HPM_Start("FMGSolve()");
+    if( (doTiming==1) && (onLevel==0) )HPM_Start("FMGSolve()");
     #endif
 
     #ifdef USE_MPI
@@ -107,7 +153,7 @@ void bench_hpgmg(mg_type *all_grids, int onLevel, double a, double b, double dto
     #endif
 
     #ifdef USE_HPM // IBM performance counters for BGQ...
-    if(doTiming)HPM_Stop("FMGSolve()");
+    if( (doTiming==1) && (onLevel==0) )HPM_Stop("FMGSolve()");
     #endif
   }
 }
@@ -129,6 +175,8 @@ int main(int argc, char **argv){
     }
   }
   #endif
+
+
     
 
   //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  
@@ -153,6 +201,11 @@ int main(int argc, char **argv){
   #endif
   #endif // USE_MPI
 
+#ifdef GPU_ARRAY_VIEW
+  // For now, just use the default accelerator.  TODO: Handle multiple accelerators/MPI
+  accelerator acc;
+  accelerator_view acc_view(acc.get_default_view());
+#endif // GPU_ARRAY_VIEW
 
   //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  
   // parse the arguments...
@@ -216,6 +269,78 @@ int main(int argc, char **argv){
       #endif
       exit(0);
     }
+    #if defined(PRINT_DETAILS)
+    if (my_rank == 0) {
+      #if defined(__HCC__)
+      fprintf(stderr, "log2_box_dim = %d, target_boxes_per_rank = %d\n", log2_box_dim, target_boxes_per_rank);
+      fprintf(stderr, "Compiled with HCC compiler version %s", __hcc_version__);
+      #if defined(__KALMAR_AMP__) || defined(__HCC_AMP__)
+      fprintf(stderr, " in C++ AMP mode\n");
+      #elif defined(__KALMAR_HC__) || defined(__HCC_HC__)
+      fprintf(stderr, " in HC mode\n");
+      #else
+      fprintf(stderr, " in unknown mode\n");
+      #endif
+      #else
+      fprintf(stderr, "Compiled with non-HCC compiler\n");
+      #endif
+      #if defined(USE_MPI)
+      fprintf(stderr, "  Compiled with MPI\n");
+      #else
+      fprintf(stderr, "  Compiled without MPI\n");
+      #endif
+      #if defined(_OPENMP)
+        fprintf(stderr, "  Compiled with OPENMP\n");
+      #else
+      fprintf(stderr, "  Compiled without OPENMP\n");
+      #endif
+      #ifdef GPU_ARRAY_VIEW
+      fflush(stderr);
+      std::wcerr << "  Array/array_view version" << std::endl;
+      std::wcerr << "  Using accelerator " << acc.get_description();
+      std::wcerr << ", device_path = " << acc.get_device_path() << std::endl;
+      #endif // GPU_ARRAY_VIEW
+      fprintf(stderr, "  Block sizes are %d for k and %d for j\n", BLOCKCOPY_TILE_K, BLOCKCOPY_TILE_J);
+      #if defined(USE_GPU)
+      #if defined(USE_GPU_FOR_SMOOTH)
+      fprintf(stderr, "  Using GPU (HCC/C++ AMP) ");
+      fprintf(stderr, "to parallelize %d smoother loops with %d explicit tile dimensions", GPU_DIM, GPU_TILE_DIM);
+      switch(GPU_TILE_DIM) {
+        case -1:
+          fprintf(stderr, "<%d,%d,%d>\n", GPU_TILE_BLOCKS, GPU_TILE_K, GPU_TILE_J);
+        case 0:
+          fprintf(stderr, "<>\n");
+          break;
+        case 1:
+          fprintf(stderr, "<%d>\n", GPU_TILE_I);
+          break;
+        case 2:
+          fprintf(stderr, "<%d,%d>\n", GPU_TILE_J, GPU_TILE_I);
+          break;
+        case 3:
+          if (GPU_DIM==4) {
+            fprintf(stderr, "<%d*%d,%d,%d>\n", GPU_TILE_BLOCKS, GPU_TILE_K, GPU_TILE_J, GPU_TILE_I);
+          } else {
+            fprintf(stderr, "<%d,%d,%d>\n", GPU_TILE_K, GPU_TILE_J, GPU_TILE_I);
+          }
+          break;
+        default:
+          fprintf(stderr, "GPU_TILE_DIM must be -1, 0, 1, 2, or 3.\n");
+          exit(1);
+      }
+      #endif // USE_GPU_FOR_SMOOTH
+      #if defined(USE_GPU_FOR_BLAS)
+      fprintf(stderr, "  Using GPU for some BLAS calculations\n");
+      #endif
+      #if defined(USE_GPU_FOR_RESIDUAL)
+      fprintf(stderr, "  Using GPU to calculate residuals\n");
+      #endif
+      #if defined(USE_GPU_FOR_RESTRICT)
+      fprintf(stderr, "  Using GPU for restriction\n");
+      #endif
+    #endif
+    }
+    #endif // PRINT_DETAILS
   } // argc==3
 
   #if 0

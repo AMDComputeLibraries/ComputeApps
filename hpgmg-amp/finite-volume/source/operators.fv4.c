@@ -1,5 +1,5 @@
 /*******************************************************************************
-Copyright (c) 2015 Advanced Micro Devices, Inc. 
+Copyright (c) 2016 Advanced Micro Devices, Inc. 
 
 All rights reserved.
 
@@ -38,12 +38,20 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
-#ifdef USE_AMP
-#include <amp.h>
-#endif
+#ifdef USE_GPU
+  #if defined(__KALMAR_AMP__)
+    #include <amp.h>
+    #include <amp_math.h>
+  #elif defined(__KALMAR_HC__)
+    #include <hc.hpp>
+    #include <hc_math.hpp>
+  #else
+    #error Neither __KALMAR_AMP__ nor __KALMAR_HC__ defined; has compiler changed?
+  #endif
+#endif // USE_GPU
 //------------------------------------------------------------------------------------------------------------------------------
 #ifdef _OPENMP
-#include <omp.h>
+  #include <omp.h>
 #endif
 //------------------------------------------------------------------------------------------------------------------------------
 #include "timers.h"
@@ -80,10 +88,30 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #endif
 
 
-#ifdef USE_AMP
-#define AMP_RESTRICT
+#ifdef USE_GPU
+#define GPU_RESTRICT
+  #if defined(GPU_TILE_BLOCKS)
+    #define BBS GPU_TILE_BLOCKS
+  #else
+    #define BBS 1
+  #endif
+  #if defined(GPU_TILE_K)
+    #define KBS GPU_TILE_K
+  #else
+    #define KBS 2
+  #endif
+  #if defined(GPU_TILE_J)
+    #define JBS GPU_TILE_J
+  #else
+    #define JBS 8
+  #endif
+  #if defined(GPU_TILE_I)
+    #define IBS GPU_TILE_I
+  #else
+    #define IBS 32
+  #endif
 #else
-#define AMP_RESTRICT __restrict__
+#define GPU_RESTRICT __restrict__
 #endif
 //------------------------------------------------------------------------------------------------------------------------------
 #ifdef STENCIL_FUSE_BC
@@ -96,23 +124,27 @@ void apply_BCs(level_type * level, int x_id, int shape){apply_BCs_v4(level,x_id,
 //------------------------------------------------------------------------------------------------------------------------------
 #define STENCIL_TWELFTH ( 0.0833333333333333333)  // 1.0/12.0;
 //------------------------------------------------------------------------------------------------------------------------------
-#if defined(USE_AMP)
-  #pragma message "USE_AMP is defined"
+#if defined(USE_GPU_FOR_SMOOTH)
+#ifndef GPU_ARRAY_VIEW
 
-  #define BBS AMP_TILE_BLOCKS
-  #define KBS AMP_TILE_K
-  #define JBS AMP_TILE_J
-  #define IBS AMP_TILE_I
-
-  #ifndef AMP_TILE_DIM
-    #define AMP_TILE_DIM 0
-  #endif // AMP_TILE_DIM
+  #ifndef GPU_TILE_DIM
+    #define GPU_TILE_DIM 0
+  #endif // GPU_TILE_DIM
 
 
+  #ifndef USE_LDS
+  #undef USElxn
+  #undef USElbk
+  #undef USElbj
+  #undef USElbi
+  #endif
   #if defined(USE_LDS)
     #error LDS use not (yet?) implemented for fv4
+    #undef USE_LDS
+  #endif // USE_LDS
+/*
+
     #ifdef USElxn
-      #pragma message "USElxn is defined"
       // The use of local_x is much more complicated for fv4 than fv2
       // because of the extra ghost zones and more complicated usage patterns
       #define lxn(x,inck,incj,inci) (local_x[l_k+inck+2][l_j+incj+2][l_i+inci+2])
@@ -130,7 +162,6 @@ void apply_BCs(level_type * level, int x_id, int shape){apply_BCs_v4(level,x_id,
         lxn(x,0,0,0) = x[ijk];                                \
       }
     #else // USElxn
-      #pragma message "USElxn is not defined"
       #define lxn(x,inck,incj,inci) (x[ijk+inci+incj*jStride+inck*kStride])
       #define LXN_SIZE (0)
       #define DECLARE_LXN
@@ -141,7 +172,6 @@ void apply_BCs(level_type * level, int x_id, int shape){apply_BCs_v4(level,x_id,
     // complicated than fv2, in this case because there are some 
     // more complicated references.
     #ifdef USElbk
-      #pragma message "USElbk is defined"
       #define lbk(x,inck,incj,inci) (local_beta_k[l_k+inck+1][l_j+incj+1][l_i+inci+1])
       #define LBK_SIZE ((KBS+2)*(JBS+2)*(IBS+2))
       #define DECLARE_LBK tile_static double local_beta_k[KBS+2][JBS+2][IBS+2]
@@ -157,7 +187,6 @@ void apply_BCs(level_type * level, int x_id, int shape){apply_BCs_v4(level,x_id,
         lbk(0,0,0) = beta_k[ijk];                           \
       }
     #else // USElbk
-      #pragma message "USElbk is not defined"
       #define lbk(x,inck,incj,inci) (beta_k[ijk+inci+incj*jStride+inck*kStride])
       #define LBK_SIZE (0)
       #define DECLARE_LBK
@@ -165,7 +194,6 @@ void apply_BCs(level_type * level, int x_id, int shape){apply_BCs_v4(level,x_id,
     #endif // USElbk
 
     #ifdef USElbj
-      #pragma message "USElbj is defined"
       #define lbj(x,inck,incj,inci) (local_beta_j[l_k+inck+1][l_j+incj+1][l_i+inci+1])
       #define LBJ_SIZE ((KBS+2)*(JBS+2)*(IBS+2))
       #define DECLARE_LBJ tile_static double local_beta_j[KBS+2][JBS+2][IBS+2]
@@ -181,7 +209,6 @@ void apply_BCs(level_type * level, int x_id, int shape){apply_BCs_v4(level,x_id,
         lbj(0,0,0) = beta_j[ijk];                           \
       }
     #else // USElbj
-      #pragma message "USElbj is not defined"
       #define lbj(x,inck,incj,inci) (beta_j[ijk+inci+incj*jStride+inck*kStride])
       #define LBJ_SIZE (0)
       #define DECLARE_LBJ
@@ -189,7 +216,6 @@ void apply_BCs(level_type * level, int x_id, int shape){apply_BCs_v4(level,x_id,
     #endif // USElbj
 
     #ifdef USElbi
-      #pragma message "USElbi is defined"
       #define lbi(x,inck,incj,inci) (local_beta_i[l_k+inck+1][l_j+incj+1][l_i+inci+1])
       #define LBI_SIZE ((KBS+2)*(JBS+2)*(IBS+2))
       #define DECLARE_LBI tile_static double local_beta_i[KBS+2][JBS+2][IBS+2]
@@ -205,158 +231,88 @@ void apply_BCs(level_type * level, int x_id, int shape){apply_BCs_v4(level,x_id,
         lbi(0,0,0) = beta_i[ijk];                           \
       }
     #else // USElbi
-      #pragma message "USElbi is not defined"
       #define lbi(x,inck,incj,inci) (beta_j[ijk+inci+incj*jStride+inck*kStride])
       #define LBI_SIZE (0)
       #define DECLARE_LBI
       #define INITIALIZE_LBI(x)
     #endif // USElbi
-
-    #if defined(USElval)
-      #error The fv4 operator does not support STENCIL_FUSE_BC, and has no need for valid[]
-    #endif
+*/
+#endif // GPU_ARRAY_VIEW
 
     #ifdef STENCIL_VARIABLE_COEFFICIENT
+      #define apply_op_ijk_poisson                                                                           \
+      (                                                                                                  \
+       -b*h2inv*(                                                                                        \
+          STENCIL_TWELFTH*(                                                                              \
+            + lbi( 0, 0, 0)*( 15.0*(lxn( 0, 0,-1)-lxn(0,0,0)) - (lxn( 0, 0,-2)-lxn( 0, 0,+1)) )          \
+            + lbi( 0, 0,+1)*( 15.0*(lxn( 0, 0,+1)-lxn(0,0,0)) - (lxn( 0, 0,+2)-lxn( 0, 0,-1)) )          \
+            + lbj( 0, 0, 0)*( 15.0*(lxn( 0,-1, 0)-lxn(0,0,0)) - (lxn( 0,-2, 0)-lxn( 0,+1, 0)) )          \
+            + lbj( 0,+1, 0)*( 15.0*(lxn( 0,+1, 0)-lxn(0,0,0)) - (lxn( 0,+2, 0)-lxn( 0,-1, 0)) )          \
+            + lbk( 0, 0, 0)*( 15.0*(lxn(-1, 0, 0)-lxn(0,0,0)) - (lxn(-2, 0, 0)-lxn(+1, 0, 0)) )          \
+            + lbk(+1, 0, 0)*( 15.0*(lxn(+1, 0, 0)-lxn(0,0,0)) - (lxn(+2, 0, 0)-lxn(-1, 0, 0)) )          \
+          )                                                                                              \
+          + 0.25*STENCIL_TWELFTH*(                                                                       \
+            + (lbi( 0,+1, 0)-lbi( 0,-1, 0)) * (lxn( 0,+1,-1)-lxn( 0,+1, 0)-lxn( 0,-1,-1)+lxn( 0,-1, 0))  \
+            + (lbi(+1, 0, 0)-lbi(-1, 0, 0)) * (lxn(+1, 0,-1)-lxn(+1, 0, 0)-lxn(-1, 0,-1)+lxn(-1, 0, 0))  \
+            + (lbj( 0, 0,+1)-lbj( 0, 0,-1)) * (lxn( 0,-1,+1)-lxn( 0, 0,+1)-lxn( 0,-1,-1)+lxn( 0, 0,-1))  \
+            + (lbj(+1, 0, 0)-lbj(-1, 0, 0)) * (lxn(+1,-1, 0)-lxn(+1, 0, 0)-lxn(-1,-1, 0)+lxn(-1, 0, 0))  \
+            + (lbk( 0, 0,+1)-lbk( 0, 0,-1)) * (lxn(-1, 0,+1)-lxn( 0, 0,+1)-lxn(-1, 0,-1)+lxn( 0, 0,-1))  \
+            + (lbk( 0,+1, 0)-lbk( 0,-1, 0)) * (lxn(-1,+1, 0)-lxn( 0,+1, 0)-lxn(-1,-1, 0)+lxn( 0,-1, 0))  \
+                                                                                                         \
+            + (lbi( 0,+1,+1)-lbi( 0,-1,+1)) * (lxn( 0,+1,+1)-lxn( 0,+1, 0)-lxn( 0,-1,+1)+lxn( 0,-1, 0))  \
+            + (lbi(+1, 0,+1)-lbi(-1, 0,+1)) * (lxn(+1, 0,+1)-lxn(+1, 0, 0)-lxn(-1, 0,+1)+lxn(-1, 0, 0))  \
+            + (lbj( 0,+1,+1)-lbj( 0,+1,-1)) * (lxn( 0,+1,+1)-lxn( 0, 0,+1)-lxn( 0,+1,-1)+lxn( 0, 0,-1))  \
+            + (lbj(+1,+1, 0)-lbj(-1,+1, 0)) * (lxn(+1,+1, 0)-lxn(+1, 0, 0)-lxn(-1,+1, 0)+lxn(-1, 0, 0))  \
+            + (lbk(+1, 0,+1)-lbk(+1, 0,-1)) * (lxn(+1, 0,+1)-lxn( 0, 0,+1)-lxn(+1, 0,-1)+lxn( 0, 0,-1))  \
+            + (lbk(+1,+1, 0)-lbk(+1,-1, 0)) * (lxn(+1,+1, 0)-lxn( 0,+1, 0)-lxn(+1,-1, 0)+lxn( 0,-1, 0))  \
+          )                                                                                              \
+        )                                                                                                \
+      )
       #ifdef USE_HELMHOLTZ
-        #define apply_op_ijk_amp(x)                                                                                                  \
-        (                                                                                                                            \
-          a*alpha[ijk]*x[ijk]                                                                                                        \
-          -b*h2inv*(                                                                                                                 \
-            STENCIL_TWELFTH*(                                                                                                        \
-              + lbi(k  ,j  ,i  )*( 15.0*(lxn(x,k  ,j  ,i-1)-lxn(x,k,j,i)) - (lxn(x,k  ,j  ,i-2)-lxn(x,k  ,j  ,i+1)) )                \
-              + lbi(k  ,j  ,i+1)*( 15.0*(lxn(x,k  ,j  ,i+1)-lxn(x,k,j,i)) - (lxn(x,k  ,j  ,i+2)-lxn(x,k  ,j  ,i-1)) )                \
-              + lbj(k  ,j  ,i  )*( 15.0*(lxn(x,k  ,j-1,i  )-lxn(x,k,j,i)) - (lxn(x,k  ,j-2,i  )-lxn(x,k  ,j+1,i  )) )                \
-              + lbj(k  ,j+1,i  )*( 15.0*(lxn(x,k  ,j+1,i  )-lxn(x,k,j,i)) - (lxn(x,k  ,j+2,i  )-lxn(x,k  ,j-1,i  )) )                \
-              + lbk(k  ,j  ,i  )*( 15.0*(lxn(x,k-1,j  ,i  )-lxn(x,k,j,i)) - (lxn(x,k-2,j  ,i  )-lxn(x,k+1,j  ,i  )) )                \
-              + lbk(k+1,j  ,i  )*( 15.0*(lxn(x,k+1,j  ,i  )-lxn(x,k,j,i)) - (lxn(x,k+2,j  ,i  )-lxn(x,k-1,j  ,i  )) )                \
-            )                                                                                                                        \
-            + 0.25*STENCIL_TWELFTH*(                                                                                                 \
-              + (lbi(k  ,j+1,i  )-lbi(k  ,j-1,i  )) * (lxn(x,k  ,j+1,i-1)-lxn(x,k  ,j+1,i  )-lxn(x,k  ,j-1,i-1)+lxn(x,k  ,j-1,i  ))  \
-              + (lbi(k+1,j  ,i  )-lbi(k-1,j  ,i  )) * (lxn(x,k+1,j  ,i-1)-lxn(x,k+1,j  ,i  )-lxn(x,k-1,j  ,i-1)+lxn(x,k-1,j  ,i  ))  \
-              + (lbj(k  ,j  ,i+1)-lbj(k  ,j  ,i-1)) * (lxn(x,k  ,j-1,i+1)-lxn(x,k  ,j  ,i+1)-lxn(x,k,  j-1,i-1)+lxn(x,k  ,j,  i-1))  \
-              + (lbj(k+1,j  ,i  )-lbj(k-1,j  ,i  )) * (lxn(x,k+1,j-1,i  )-lxn(x,k+1,j  ,i  )-lxn(x,k-1,j-1,i  )+lxn(x,k-1,j  ,i  ))  \
-              + (lbk(k  ,j  ,i+1)-lbk(k  ,j  ,i-1)) * (lxn(x,k-1,j  ,i+1)-lxn(x,k  ,j  ,i+1)-lxn(x,k-1,j  ,i-1)+lxn(x,k  ,j  ,i-1))  \
-              + (lbk(k  ,j+1,i  )-lbk(k  ,j-1,i  )) * (lxn(x,k-1,j+1,i  )-lxn(x,k  ,j+1,i  )-lxn(x,k-1,j-1,i  )+lxn(x,k  ,j-1,i  ))  \
-                                                                                                                                     \
-              + (lbi(k  ,j+1,i+1)-lbi(k  ,j-1,i+1)) * (lxn(x,k  ,j+1,i+1)-lxn(x,k  ,j+1,i  )-lxn(x,k  ,j-1,i+1)+lxn(x,k  ,j-1,i  ))  \
-              + (lbi(k+1,j  ,i+1)-lbi(k-1,j  ,i+1)) * (lxn(x,k+1,j  ,i+1)-lxn(x,k+1,j  ,i  )-lxn(x,k-1,j  ,i+1)+lxn(x,k-1,j  ,i  ))  \
-              + (lbj(k  ,j+1,i+1)-lbj(k  ,j+1,i-1)) * (lxn(x,k  ,j+1,i+1)-lxn(x,k  ,j  ,i+1)-lxn(x,k  ,j+1,i-1)+lxn(x,k  ,j  ,i-1))  \
-              + (lbj(k+1,j+1,i  )-lbj(k-1,j+1,i  )) * (lxn(x,k+1,j+1,i  )-lxn(x,k+1,j  ,i  )-lxn(x,k-1,j+1,i  )+lxn(x,i-1,j  ,i  ))  \
-              + (lbk(k+1,j  ,i+1)-lbk(k+1,j  ,i-1)) * (lxn(x,k+1,j  ,i+1)-lxn(x,k  ,j  ,i+1)-lxn(x,k+1,j  ,i-1)+lxn(x,k  ,j  ,i-1))  \
-              + (lbk(k+1,j+1,i  )-lbk(k+1,j-1,i  )) * (lxn(x,k+1,j+1,i  )-lxn(x,k  ,j+1,i  )-lxn(x,k+1,j-1,i  )+lxn(x,k  ,j-1,i  ))  \
-            )                                                                                                                        \
-          )                                                                                                                          \
-        )
-      #else // Poisson...
-        #define apply_op_ijk(x)                                                                                                      \
-        (                                                                                                                            \
-         -b*h2inv*(                                                                                                                  \
-            STENCIL_TWELFTH*(                                                                                                        \
-              + lbi(k  ,j  ,i  )*( 15.0*(lxn(x,k  ,j  ,i-1)-lxn(x,k,j,i)) - (lxn(x,k  ,j  ,i-2)-lxn(x,k  ,j  ,i+1)) )                \
-              + lbi(k  ,j  ,i+1)*( 15.0*(lxn(x,k  ,j  ,i+1)-lxn(x,k,j,i)) - (lxn(x,k  ,j  ,i+2)-lxn(x,k  ,j  ,i-1)) )                \
-              + lbj(k  ,j  ,i  )*( 15.0*(lxn(x,k  ,j-1,i  )-lxn(x,k,j,i)) - (lxn(x,k  ,j-2,i  )-lxn(x,k  ,j+1,i  )) )                \
-              + lbj(k  ,j+1,i  )*( 15.0*(lxn(x,k  ,j+1,i  )-lxn(x,k,j,i)) - (lxn(x,k  ,j+2,i  )-lxn(x,k  ,j-1,i  )) )                \
-              + lbk(k  ,j  ,i  )*( 15.0*(lxn(x,k-1,j  ,i  )-lxn(x,k,j,i)) - (lxn(x,k-2,j  ,i  )-lxn(x,k+1,j  ,i  )) )                \
-              + lbk(k+1,j  ,i  )*( 15.0*(lxn(x,k+1,j  ,i  )-lxn(x,k,j,i)) - (lxn(x,k+2,j  ,i  )-lxn(x,k-1,j  ,i  )) )                \
-            )                                                                                                                        \
-            + 0.25*STENCIL_TWELFTH*(                                                                                                 \
-              + (lbi(k  ,j+1,i  )-lbi(k  ,j-1,i  )) * (lxn(x,k  ,j+1,i-1)-lxn(x,k  ,j+1,i  )-lxn(x,k  ,j-1,i-1)+lxn(x,k  ,j-1,i  ))  \
-              + (lbi(k+1,j  ,i  )-lbi(k-1,j  ,i  )) * (lxn(x,k+1,j  ,i-1)-lxn(x,k+1,j  ,i  )-lxn(x,k-1,j  ,i-1)+lxn(x,k-1,j  ,i  ))  \
-              + (lbj(k  ,j  ,i+1)-lbj(k  ,j  ,i-1)) * (lxn(x,k  ,j-1,i+1)-lxn(x,k  ,j  ,i+1)-lxn(x,k,  j-1,i-1)+lxn(x,k  ,j,  i-1))  \
-              + (lbj(k+1,j  ,i  )-lbj(k-1,j  ,i  )) * (lxn(x,k+1,j-1,i  )-lxn(x,k+1,j  ,i  )-lxn(x,k-1,j-1,i  )+lxn(x,k-1,j  ,i  ))  \
-              + (lbk(k  ,j  ,i+1)-lbk(k  ,j  ,i-1)) * (lxn(x,k-1,j  ,i+1)-lxn(x,k  ,j  ,i+1)-lxn(x,k-1,j  ,i-1)+lxn(x,k  ,j  ,i-1))  \
-              + (lbk(k  ,j+1,i  )-lbk(k  ,j-1,i  )) * (lxn(x,k-1,j+1,i  )-lxn(x,k  ,j+1,i  )-lxn(x,k-1,j-1,i  )+lxn(x,k  ,j-1,i  ))  \
-                                                                                                                                     \
-              + (lbi(k  ,j+1,i+1)-lbi(k  ,j-1,i+1)) * (lxn(x,k  ,j+1,i+1)-lxn(x,k  ,j+1,i  )-lxn(x,k  ,j-1,i+1)+lxn(x,k  ,j-1,i  ))  \
-              + (lbi(k+1,j  ,i+1)-lbi(k-1,j  ,i+1)) * (lxn(x,k+1,j  ,i+1)-lxn(x,k+1,j  ,i  )-lxn(x,k-1,j  ,i+1)+lxn(x,k-1,j  ,i  ))  \
-              + (lbj(k  ,j+1,i+1)-lbj(k  ,j+1,i-1)) * (lxn(x,k  ,j+1,i+1)-lxn(x,k  ,j  ,i+1)-lxn(x,k  ,j+1,i-1)+lxn(x,k  ,j  ,i-1))  \
-              + (lbj(k+1,j+1,i  )-lbj(k-1,j+1,i  )) * (lxn(x,k+1,j+1,i  )-lxn(x,k+1,j  ,i  )-lxn(x,k-1,j+1,i  )+lxn(x,i-1,j  ,i  ))  \
-              + (lbk(k+1,j  ,i+1)-lbk(k+1,j  ,i-1)) * (lxn(x,k+1,j  ,i+1)-lxn(x,k  ,j  ,i+1)-lxn(x,k+1,j  ,i-1)+lxn(x,k  ,j  ,i-1))  \
-              + (lbk(k+1,j+1,i  )-lbk(k+1,j-1,i  )) * (lxn(x,k+1,j+1,i  )-lxn(x,k  ,j+1,i  )-lxn(x,k+1,j-1,i  )+lxn(x,k  ,j-1,i  ))  \
-            )                                                                                                                        \
-          )                                                                                                                          \
-        )
-      #endif // Helmholtz/Poisson
+        #define apply_op_ijk_gpu  (a*lalpha(ijk)*lxn(0,0,0) + apply_op_ijk_poisson)
+      #else
+        #define apply_op_ijk_gpu  (                           apply_op_ijk_poisson)
+      #endif
+
     #else // constant coefficient (don't bother differentiating between Poisson and Helmholtz)...
-      #define apply_op_ijk(x)                 \
-      (                                       \
-        a*lxn(x,k,j,i)
+      #define apply_op_ijk_gpu      \
+      (                             \
+        a*lxn(0,0,0)                \
         - b*h2inv*STENCIL_TWELFTH*( \
-       - 1.0*(lxn(x,k-2,j  ,i  ) +  \
-              lxn(x,k  ,j-2,i  ) +  \
-              lxn(x,k  ,j  ,i-2) +  \
-              lxn(x,k,  j  ,i+2) +  \
-              lxn(x,k  ,j+2,i  ) +  \
-              lxn(x,k+2,j  ,i  ))   \
-       +16.0*(lxn(x,k-1,j  ,i  ) +  \
-              lxn(x,k  ,j-1,i  ) +  \
-              lxn(x,k  ,j  ,i-1) +  \
-              lxn(x,k  ,j  ,i+1) +  \
-              lxn(x,k  ,j+1,i  ) +  \
-              lxn(x,k+1,j  ,i  ))   \
-       -90.0*(lxn(x,k  ,j  ,i  ))   \
-    )                               \
-  )
-#endif
+       - 1.0*(lxn(-2, 0, 0) +       \
+              lxn( 0,-2, 0) +       \
+              lxn( 0, 0,-2) +       \
+              lxn( 0, 0,+2) +       \
+              lxn( 0,+2, 0) +       \
+              lxn(+2, 0, 0))        \
+       +16.0*(lxn(-1, 0, 0) +       \
+              lxn( 0,-1, 0) +       \
+              lxn( 0, 0,-1) +       \
+              lxn( 0, 0,+1) +       \
+              lxn( 0,+1, 0) +       \
+              lxn(+1, 0, 0))        \
+       -90.0*(lxn( 0, 0, 0))        \
+      )                             \
+    )
+    #endif // variable/constant coefficient
 
-#else // USE_LDS
-  #undef USElxn
-  #undef USElbk
-  #undef USElbj
-  #undef USElbi
-  #undef USElval
-  #define lxn(x,inck,incj,inci) (x[ijk+inci+incj*jStride+inck*kStride])
-  #define lbk(inck) (beta_k[ijk+inck*kStride])
-  #define lbj(incj) (beta_j[ijk+incj*jStride])
-  #define lbi(inci) (beta_i[ijk+inci])
+#define LDS_USE (LXN_SIZE + LBK_SIZE + LBJ_SIZE + LBI_SIZE)
+#endif // USE_GPU_FOR_SMOOTH
 
-  #define DECLARE_LXN
-  #define DECLARE_LBK
-  #define DECLARE_LBJ
-  #define DECLARE_LBI
-
-  #define INITIALIZE_LXN(x)
-  #define INITIALIZE_LBK()
-  #define INITIALIZE_LBJ()
-  #define INITIALIZE_LBI()
-#endif // USE_LDS
-
-void print_amp_details(void)
+#ifdef PRINT_DETAILS
+void print_smooth_details(void)
 {
-  fprintf(stderr, "Using GPU (C++ AMP/Kalmar)\n");
-  fprintf(stderr, "  to parallelize %d loops with %d tile dimensions",
-          AMP_DIM, AMP_TILE_DIM);
-  switch(AMP_TILE_DIM) {
-      case 0:
-          fprintf(stderr, "<>\n");
-          break;
-      case 1:
-          fprintf(stderr, "<%d>\n", IBS);
-          break;
-      case 2:
-          fprintf(stderr, "<%d,%d>\n", JBS, IBS);
-          break;
-      case 3:
-          if (AMP_DIM==4) {
-              fprintf(stderr, "<%d*%d,%d,%d>\n", BBS, KBS, JBS, IBS);
-          } else {
-              fprintf(stderr, "<%d,%d,%d>\n", KBS, JBS, IBS);
-          }
-          break;
-      default:
-          fprintf(stderr, "AMP_TILE_DIM must be 0,1,2, or 3.\n");
-          exit(1);
-  }
+  fprintf(stderr, "  Smooth:\n");
+  fprintf(stderr, "   fv4 operator\n");
 
   #ifdef USE_HELMHOLTZ
     fprintf(stderr, "   solving HELMHOLTZ\n");
-    fprintf(stderr, "   alpha is used, but probably not worth putting in LDS\n");
+    fprintf(stderr, "   alpha is used\n");
   #else // USE_HELMHOLTZ
     fprintf(stderr, "   solving POISSON\n");
     fprintf(stderr, "   alpha is not used\n");
   #endif // USE_HELMHOLTZ
 
-  fprintf(stderr, "   fv4 operator\n");
 
   #if defined(USE_CHEBY)
     fprintf(stderr, "   CHEBY smoother\n");
@@ -398,8 +354,10 @@ void print_amp_details(void)
     fprintf(stderr, "   not using beta_k, beta_j, beta_i\n");
   #endif // STENCIL_VARIABLE_COEFFICIENT
 
+  #ifdef USE_GPU_FOR_SMOOTH
+  fprintf(stderr, "    GPU_THRESHOLD is %d\n", GPU_THRESHOLD);
   #if defined(USE_LDS)
-  #if defined(AMP_TILE_DIM) && (AMP_TILE_DIM != 0)
+  #if defined(GPU_TILE_DIM) && (GPU_TILE_DIM != 0)
   #ifdef USElxn
     fprintf(stderr, "   using LDS for x_n\n");
   #else // USElxn
@@ -442,25 +400,26 @@ void print_amp_details(void)
     fflush(stderr);
     exit(0);
   }
-  #else // AMP_TILE_DIM
-  fprintf(stderr, "   No GPU tiling, so no LDS use; THRESHOLD is %d\n", AMP_INNER_THRESHOLD);
-  #endif // AMP_TILE_DIM
+  #else // GPU_TILE_DIM
+  fprintf(stderr, "   No GPU tiling, so no LDS use\n");
+  #endif // GPU_TILE_DIM
   #else // USE_LDS
   fprintf(stderr, "   Not using LDS\n");
   #endif // USE_LDS
+  #endif // USE_GPU_FOR_SMOOTH
 }
 
-inline void print_amp_info(void)
+void print_smooth_info(void)
 {
-  static bool printTileInfo = true;
-  if (printTileInfo) {
-    print_amp_details();
-    printTileInfo = false;
+  static int printSmoothInfo = 1;
+  if (printSmoothInfo) {
+    print_smooth_details();
+    printSmoothInfo = 0;
   }
 }
+#endif // PRINT_DETAILS
 
 
-#endif // USE_AMP
 
 #ifdef STENCIL_VARIABLE_COEFFICIENT
   #ifdef USE_HELMHOLTZ
@@ -544,9 +503,6 @@ inline void print_amp_info(void)
   )
 #endif
 
-#if defined(USE_AMP) && !defined(FV4_SUPPORTS_LDS)
-  #define apply_op_ijk_amp(x) apply_op_ijk(x)
-#endif
 //------------------------------------------------------------------------------------------------------------------------------
 #ifdef STENCIL_VARIABLE_COEFFICIENT
 int stencil_get_radius(){return(2);} // stencil reaches out 2 cells
@@ -616,7 +572,6 @@ void rebuild_operator(level_type * level, level_type *fromLevel, double a, doubl
 #include "operators/misc.c"
 #include "operators/exchange_boundary.c"
 #include "operators/boundary_fv.c"
-#include "operators/matmul.c"
 #include "operators/restriction.c"
 #include "operators/interpolation_v2.c"
 #include "operators/interpolation_v4.c"

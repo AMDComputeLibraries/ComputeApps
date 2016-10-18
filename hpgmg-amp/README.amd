@@ -1,58 +1,161 @@
-As HCC / C++ AMP / Kalmar needs its source to be written in C++ and compiled
-with a C++ compiler, Makefile changes were needed.  It proved easiest to use
-multiple Makefiles, abandoning the use of config, at least for now.
-You can still use ./configure <parameters> and make -j3 -C build, but we
-recommend doing as follows:
-To build the C++ AMP version, use
-  make -f Makefile.amp
-to make build/bin/hpgmg-fv-amp
-or, if you have the newer, HCC version of the compiler installed,
-  make -f Makefile.hcc
-to make build/bin/hpgmg-fv-hcc
-You can make build/bin/hpgmg-fv-omp (OpenMP version) using
-  make -f Makefile.omp
-or by using configure, but using Makefile.omp is more easily compatible with
-the other new Makefiles.
+General information:
 
-Because our test runs showed a large portion of the execution time to be spent
-in smooth(), we decided to focus there.  We first concentrated on chebyshev.c
-and the 7pt operator.  With the release of new fv2 and fv4 operators by Sam
-Williams, we concentrated more on those operators and on gsrb.c. It is
-interesting that the lack of performance Sam has noted when using fv4 with the
-Chebyshev operator does not seem to occur in the AMP / Kalmar version.
+The base source for this version of hpgmg-fv is commit
+8aa693d74cc1698f102efb5a378f9ad8a8dbbf40, dated 2/24/2016,
+from the official HPGMG repository at https://bitbucket.org/hpgmg/hpgmg
 
-With this version of the code the Makefiles have changed somewhat, primarily
-in the change from STENCIL to OPERATOR and in the definition of VERSION.
--DUSE_AMP is a general-purpose notification to the source.  -DAMP_DIM=n says
-that the n inner loops of smooth are being run with AMP.  -DAMP_TILE_DIM=m
-says that there are m AMP tiles.  When AMP_DIM is 4 and AMP_TILE_DIM is 3
-(the max allowed), the outermost two loops are linearized into one AMP tile.
+Although hpgmg-fe source is included here, it has not been modified by AMD.
+Everything of interest is either in this directory or in
+./finite-volume/source{/*}.
 
-Not all combinations of VERSION, OPERATOR, SMOOTHER, etc. will work yet.
-In general, the results with -DAMP_DIM=3 -DAMP_TILE_DIM=3 have been as good
-as any. LOCAL (variables to copy to LDS) makes a surprisingly small difference.
-GSRB and CHEBY smoothers currently work with AMP / Kalmar; they support
-slightly different VERSIONs.  When using GSRB with AMP / Kalmar, GSRB_METHOD
-should be -DGSRB_BRANCH or -DGSRB_FP; STRIDE2 is not yet implemented.
+This app times itself and adjust the number of iterations accordingly.
+I have modified this version to run fewer iterations than the official version.
 
-This port of hpgmg-fv is using the shared memory features of the HSA C++ AMP / Kalmar compiler.  Rather than using array() and array_view()
-to control copying data to and from the GPU, the data stay in shared memory.
-On the Kaveri processors on which this code was tested, shared memory is still
-somewhat slow, but we chose to use the shared memory approach as an indication
-of future HSA directions.  There is a rudimentary version of an array_view
-implementation in the source, but it is not tuned.
 
-This code has been tested using OpenMPI version 1.8.1, and the HSA C++ AMP compiler
-based on clang version 3.3, and the Kalmar 3.5 compiler.  Tests were run on
-single-processor (4 CPU core, 8 GPU compute core) Kaveri chips, using
-mpirun -np 2 build/bin/hpgmg-fv-amp 6 4,
-mpirun -np 4 build/bin/hpgmg-fv-amp 6 2,
-mpirun -np 3 build/bin/hpgmg-fv-amp 6 9,
-and similar tests to make sure that the code worked with MPI.
+Building:
 
-Tests were also run using OpenMP as compiled by gcc; those were run without MPI,
-as were the majority of AMP / Kalmar benchmarks.  The current HSA stack does not
-benefit from running on multiple CPU cores, as there is only one GPU (with
-8 GPU computational cores) for four CPU cores. It has been suggested that the
-GPU could be partitioned to run OpenMP in conjunction with AMP / Kalmar, but
-that has not been implemented.
+HCC needs its source to be written in C++ and I found config to be cumbersome;
+instead I provide a single Makefile.hcc, which you can edit as you wish.
+Makefile.hcc is intended to be largely self-documenting.  You can still use
+ ./configure <parameters> and
+make -j4 -C build,
+but I recommend editing Makefile.hcc and doing 
+make -f Makefile.hcc clean ; make -f Makefile.hcc
+instead.
+
+To run on an APU, set MODEL=HSAIL in Makefile.hcc.
+To run on a discrete card (currently Fiji), set MODEL=LC.
+By default, MODEL=HSAIL.  You can set it at make time or edit Makefile.hcc
+e.g. make MODEL=LC -f Makefile.hcc clean ; make MODEL=LC -f Makefile.hcc
+Doing make CMODE= -f Makefile.hcc clean ; make CMODE= -f Makefile.hcc
+should build a non-GPU version of the code.
+
+If you want to run with array_view under MODEL=HSAIL, you may need to set CMODE=clamp.  Note that array_view is the default for MODEL=LC.
+
+Set MPI or OPENMP (or both) to true at the top of Makefile.hcc if desired.
+The target executable changes based on these choices.  For instance,
+building with MPI false, OPENMP true, and CMODE=clamp would result in
+an executable named hpgmg-fv-clamp-omp.  (Executables are build in build/bin.)
+
+There are many options when building hpgmg-fv.  The usual choice for OPERATOR
+will be fv2 or fv4; 7pt and 27pt are older, and not as well tested.  While
+fv2 is an order 2 operator, fv4 is fourth-order.  Thus fv4 takes longer,
+but gives lower error for the same problem size. The default OPERATOR is fv2.
+
+SMOOTHER can be CHEBY, JACOBI, L1JACOBI, or GSRB. For single-node computations,
+the majority of execution time will probably be spent in the smoother.
+GSRB is the choice that works best without GPU acceleration.
+All the smoothers work at about the same speed when using the GPU, though not
+always as well as GSRB with OPENMP.  When using GSRB with the GPU, GSRB_METHOD
+should be -DGSRB_BRANCH or -DGSRB_FP; STRIDE2 is not implemented for GPU.
+The default SMOOTHER is JACOBI.
+
+When GPU acceleration is being used and GPU_TILE_DIM is not 0, the TILING value
+allows you to control tile sizes. There are some useful sizes noted in
+Makefile.hcc, but you may find something better by experimenting.
+The defaults are GPU_DIM=4 GPU_TILE_DIM=3 BBS=1 KBS=2 JBS=8 IBS=32.
+
+If you don't like the information that shows up on stderr when you run,
+try undefining PRINT_DETAIL in CC_CPPFLAGS.
+
+Some combinations of VERSION, OPERATOR, SMOOTHER, etc. may not work, sometimes
+because of compiler or driver issues beyond my control.
+
+This port of hpgmg-fv works best with the shared memory features of HCC.
+Rather than using array and array_view to control copying data to and from
+the GPU, the data stay in shared memory.  On Kaveri processors, GPU access to
+coherent shared memory is fairly slow, and the GPU performance of this code
+is unimpressive.  The coherent bus is faster on Carrizo, and most testing
+was done there.  The LC code using array_view generally works, but there is currently a problem with the fv4 operator when used with the GSRB smoother.
+
+I have tested many combinations of the various knobs available using Carrizo
+hardware and various hcc.  APU acceleration should work correctly in
+conjunction with OPENMP and MPI, though I have been restricted to a single CPU
+in my MPI tests.
+
+LOCAL (variables to copy to LDS) makes a surprisingly small difference to
+the HSAIL version.  It is not completely implemented for the LC version.
+
+When using GSRB with AMP / Kalmar, GSRB_METHOD should be -DGSRB_BRANCH or
+-DGSRB_FP; STRIDE2 is not yet implemented for the GPU.
+
+Array_view version:
+
+There is also an array_view implementation in the source, which has been
+run on Boltzmann (OLD) and Rocm (LC) configurations.
+Its performance is not good; it needs to be modified to keep entire levels on
+the GPU, but this has so far not worked with array/array_view.
+
+Running:
+
+Assume you have built hpgmg-fv-hcc (no MPI or OPENMP).
+This executable will be built in build/bin.  To run it, small problem sizes are
+build/bin/hpgmg-fv-hcc-mpi-omp 5 8
+or
+build/bin/hpgmg-fv-hcc-mpi-omp 6 1
+
+In all these examples, the first number (5 or 6) is the log base 2 of the
+box size, and the second is the number of boxes per MPI rank.
+Since 2^5 * 8 == 2^6 * 1, these problems do the same amount of work and have
+the same error.
+If you are not running with MPI, the second number should be a perfect cube.
+
+The error I'm speaking of is that reported by the Richardson error analysis.
+If you send output to a file and grep for error in the result, it will
+show up as ||error||=...
+The exact value of the error will depend on the problem size, the choice
+of smoother (and, more heavily, the choice of operator).
+
+Some typical error values are shown here for small runs:
+5 8, fv2 operator, GSRB (BRANCH) smoother: 3.829371121658954e-05
+6 1, fv2 operator, GSRB (BRANCH) smoother: 3.829371121658954e-05
+5 8, fv2 operator, JACOBI smoother: 3.219782402340667e-05
+6 1, fv2 operator, JACOBI smoother: 3.219782402340667e-05
+5 8, fv2 operator, L1JACOBI smoother: 3.235344365417085e-05
+6 1, fv2 operator, L1JACOBI smoother: 3.235344365417085e-05
+5 8, fv2 operator, CHEBY smoother: 3.887772415537422e-05
+6 1, fv2 operator, CHEBY smoother: 3.887772415537422e-05
+
+5 8, fv4 operator, GSRB (BRANCH) smoother: 2.889820931067759e-06
+6 1, fv4 operator, GSRB (BRANCH) smoother: 2.889820931067759e-06
+5 8, fv4 operator, JACOBI smoother: 1.181192682819571e-06
+6 1, fv4 operator, JACOBI smoother: 1.181192682819625e-06
+5 8, fv4 operator, L1JACOBI smoother: 1.604705580368973e-06
+6 1, fv4 operator, L1JACOBI smoother: 1.604705580368973e-06
+5 8, fv4 operator, CHEBY smoother: 2.865766864619881e-06
+6 1, fv4 operator, CHEBY smoother: 2.865766864619448e-06
+NERSC recommends against using CHEBY with fv4.
+
+6 8, fv4 operator, Jacobi smoother: 2.342436689257467e-07
+7 1, fv4 operator, Jacobi smoother: 2.342436689261804e-07
+I would be happier if the last two were closer.
+
+NERSC prefers the 5 8 and 6 1 problems.  Those are pretty small
+for the APU;  it looks better on 6 8 and 7 1.  It looks even better on
+7 8 and 8 1 and larger.  In general, the APU is faster on n 1 than on n-1 8.
+
+
+If you want to run MPI, at least for these smaller problems,
+it's good to keep the number of mpi ranks times the boxes per rank
+equal to a perfect cube. Thus
+OMP_NUM_THREADS=1 mpirun -np 4 build/bin/hpgmg-fv-hcc-mpi-omp 5 2
+OMP_NUM_THREADS=2 mpirun -np 2 build/bin/hpgmg-fv-hcc-mpi-omp 5 4
+OMP_NUM_THREADS=4 mpirun -np 1 build/bin/hpgmg-fv-hcc-mpi-omp 5 8
+should all have the same error.
+Changing OMP_NUM_THREADS shouldn't greatly affect the error, but it may slow
+things down if you oversubscribe.  For instance,
+OMP_NUM_THREADS=1 mpirun -np 3 build/bin/hpgmg-fv-hcc-mpi-omp 5 9
+runs much faster than
+OMP_NUM_THREADS=3 mpirun -np 3 build/bin/hpgmg-fv-hcc-mpi-omp 5 9
+because the latter spends lots of time in MPI waiting.
+
+Finally, the figure of merit for this mini-app is Degres of Freedom per Second.
+If you send your output to a file, you can grep for DOF.
+I typically only pay attention to the first DOF result, which is for the
+largest of the three runs used by the error analysis.
+Be sure to look at the Richardson error analysis and the order computation;
+it's possible to get very fast but incorrect results when something
+is broken.  If you want something to compare against build for OpenMP
+and no GPU by setting OPENMP=true and VERSION=-DGPU_NONE.
+Error values from a GPU run may not match those from an OMP CPU run exactly,
+but they should be very close and the order should match.

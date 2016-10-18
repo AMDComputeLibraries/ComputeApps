@@ -1,3 +1,33 @@
+/*******************************************************************************
+Copyright (c) 2016 Advanced Micro Devices, Inc. 
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice, 
+this list of conditions and the following disclaimer in the documentation 
+and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+may be used to endorse or promote products derived from this software without
+specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*******************************************************************************/
 //------------------------------------------------------------------------------------------------------------------------------
 // Samuel Williams
 // SWWilliams@lbl.gov
@@ -41,7 +71,7 @@
 //------------------------------------------------------------------------------------------------------------------------------
 // FP data for a vector within a box is padded to ensure alignment
 #ifndef BOX_ALIGN_JSTRIDE
-#define BOX_ALIGN_JSTRIDE   2  // j-stride(unit stride dimension including ghosts and padding) is a multiple of BOX_ALIGN_JSTRIDE... useful for SIMD in j+/-1
+#define BOX_ALIGN_JSTRIDE   4  // j-stride(unit stride dimension including ghosts and padding) is a multiple of BOX_ALIGN_JSTRIDE... useful for SIMD in j+/-1
 #endif
 #ifndef BOX_ALIGN_KSTRIDE
 #define BOX_ALIGN_KSTRIDE   8  // k-stride is a multiple of BOX_ALIGN_KSTRIDE ... useful for SIMD in k+/-1
@@ -134,9 +164,11 @@ typedef struct {
   #endif
   double dominant_eigenvalue_of_DinvA;		// estimate on the dominate eigenvalue of D^{-1}A
   int must_subtract_mean;			// e.g. Poisson with Periodic BC's
+  double    * __restrict__ RedBlack_base;       // allocated pointer... will be aligned for the first non ghost zone element
   double    * __restrict__ RedBlack_FP;	        // Red/Black Mask (i.e. 0.0 or 1.0) for even/odd planes (2*kStride).  
 
   int num_threads;
+  double    * __restrict__ fluxes;		// temporary array used to hold the flux values used by FV operators
 
   // statistics information...
   struct {
@@ -144,6 +176,21 @@ typedef struct {
     double            apply_op;
     double            residual;
     double               blas1;
+#if defined(BLAS1_DETAIL)
+    double               blas1_zero_vector;
+    double               blas1_init_valid;
+    double               blas1_init_vector;
+    double               blas1_add_vectors;
+    double               blas1_mul_vectors;
+    double               blas1_invert_vector;
+    double               blas1_scale_vector;
+    double               blas1_dot;
+    double               blas1_norm;
+    double               blas1_mean;
+    double               blas1_shift_vector;
+    double               blas1_color_vector;
+    double               blas1_random_vector;
+#endif // BLAS1_DETAIL
     double               blas3;
     double boundary_conditions;
     // Distributed Restriction

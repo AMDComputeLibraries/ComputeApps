@@ -1,3 +1,33 @@
+/*******************************************************************************
+Copyright (c) 2016 Advanced Micro Devices, Inc. 
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice, 
+this list of conditions and the following disclaimer in the documentation 
+and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+may be used to endorse or promote products derived from this software without
+specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*******************************************************************************/
 //------------------------------------------------------------------------------------------------------------------------------
 // Samuel Williams
 // SWWilliams@lbl.gov
@@ -8,6 +38,18 @@
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
+#ifdef USE_GPU
+  #if defined(__KALMAR_AMP__) || defined(__HCC_AMP__)
+    #include <amp.h>
+    #include <amp_math.h>
+  #elif defined(__KALMAR_HC__) || defined(__HCC_HC__)
+    #include <hc.hpp>
+    #include <hc_math.hpp>
+  #else
+    #error Neither *_AMP__ nor *_HC__ defined; has compiler changed?
+  #endif
+#endif // USE_GPU
+
 //------------------------------------------------------------------------------------------------------------------------------
 #ifdef _OPENMP
 #include <omp.h>
@@ -41,6 +83,92 @@
   #define PRAGMA_THREAD_ACROSS_BLOCKS_SUM(level,b,nb,bsum)    
   #define PRAGMA_THREAD_ACROSS_BLOCKS_MAX(level,b,nb,bmax)    
 #endif
+
+#ifdef USE_GPU
+#define GPU_RESTRICT
+  #if defined(GPU_TILE_BLOCKS)
+    #define BBS GPU_TILE_BLOCKS
+  #else
+    #define BBS 1
+  #endif
+  #if defined(GPU_TILE_K)
+    #define KBS GPU_TILE_K
+  #else
+    #define KBS 2
+  #endif
+  #if defined(GPU_TILE_J)
+    #define JBS GPU_TILE_J
+  #else
+    #define JBS 8
+  #endif
+  #if defined(GPU_TILE_I)
+    #define IBS GPU_TILE_I
+  #else
+    #define IBS 32
+  #endif
+#else // USE_GPU
+#define GPU_RESTRICT __restrict__
+#endif // USE_GPU
+
+#if defined(PRINT_DETAILS)
+void print_smooth_details(void)
+{
+  fprintf(stderr, "  Smooth:\n");
+  fprintf(stderr, "   27pt operator\n");
+
+  #ifdef USE_HELMHOLTZ
+    fprintf(stderr, "   solving HELMHOLTZ: alpha is used\n");
+  #else
+    fprintf(stderr, "   solving POISSON: alpha is not used\n");
+  #endif // USE_HELMHOLTZ
+
+  #if defined(USE_CHEBY)
+    fprintf(stderr, "   CHEBY smoother\n");
+  #elif defined(USE_GSRB)
+    fprintf(stderr, "   GSRB smoother (not recommended)");
+    #if defined(GSRB_FP)
+      fprintf(stderr,", FP");
+    #elif defined(GSRB_STRIDE2)
+      fprintf(stderr,", STRIDE2");
+    #elif defined(GSRB_BRANCH)
+      fprintf(stderr,", BRANCH");
+    #else // GSRB_type
+      fprintf(stderr,", UNKNOWN");
+    #endif // GSRB_type
+    #if defined(GSRB_OOP)
+      fprintf(stderr, ", out-of-place\n");
+    #else
+      fprintf(stderr, ", in-place\n");
+    #endif
+  #elif defined(USE_JACOBI)
+    fprintf(stderr, "   JACOBI smoother\n");
+  #elif defined(USE_L1JACOBI)
+    fprintf(stderr, "   L1 JACOBI smoother\n");
+  #elif defined(USE_SYMGS)
+    fprintf(stderr, "   SYMGS smoother\n");
+    #ifdef USE_GPU_FOR_SMOOTH
+    #error SYMGS smoother not implemented on GPU
+    #endif // USE_GPU_FOR_SMOOTH
+  #else
+    #error Unknown smoother not implemented
+  #endif
+  #if defined(USE_GPU_FOR_SMOOTH)
+    fprintf(stderr, "    GPU_THRESHOLD is %d\n", GPU_THRESHOLD);
+    fprintf(stderr, "    Not using LDS\n");
+  #endif
+
+}
+void print_smooth_info(void)
+{
+  static int printSmoothInfo = 1;
+  if (printSmoothInfo) {
+    print_smooth_details();
+    printSmoothInfo = 0;
+  }
+}
+
+#endif // PRINT_DETAILS
+
 //------------------------------------------------------------------------------------------------------------------------------
 void apply_BCs(level_type * level, int x_id, int shape){apply_BCs_p2(level,x_id,shape);} // 27pt uses cell centered, not cell averaged
 //void apply_BCs(level_type * level, int x_id, int shape){apply_BCs_v2(level,x_id,shape);}
@@ -91,6 +219,20 @@ void apply_BCs(level_type * level, int x_id, int shape){apply_BCs_p2(level,x_id,
     STENCIL_COEF0*(x[ijk                  ] )	\
   )						\
 )
+#define apply_op_ijk_gpu                        \
+(						\
+  a*lxn(0,0,0) - b*h2inv*(				\
+    STENCIL_COEF3*(lxn(-1,-1,-1) + lxn(-1,-1, 1) + lxn(-1, 1,-1) + lxn(-1, 1, 1) + \
+                   lxn( 1,-1,-1) + lxn( 1,-1, 1) + lxn( 1, 1,-1) + lxn( 1, 1, 1))+ \
+    STENCIL_COEF2*(lxn(-1,-1, 0) + lxn(-1, 0,-1) + lxn(-1, 0, 1) + lxn(-1, 1, 0) + \
+                   lxn( 0,-1,-1) + lxn( 0,-1, 1) + lxn( 0, 1,-1) + lxn( 0, 1, 1) + \
+                   lxn( 1,-1, 0) + lxn( 1, 0,-1) + lxn( 1, 0, 1) + lxn( 1, 1, 0))+ \
+    STENCIL_COEF1*(lxn(-1, 0, 0) + lxn( 0,-1, 0) + lxn( 0, 0,-1) + lxn( 0, 0, 1) + \
+                   lxn( 0, 1, 0) + lxn( 1, 0, 0)) +                                \
+    STENCIL_COEF0*(lxn( 0, 0, 0))                                                  \
+  )						                                   \
+)
+
 //------------------------------------------------------------------------------------------------------------------------------
 int stencil_get_radius(){return(1);} // 27pt = dense 3^3
 int stencil_get_shape(){return(STENCIL_SHAPE_BOX);} // needs faces, edges, and corners
@@ -122,7 +264,9 @@ void rebuild_operator(level_type * level, level_type *fromLevel, double a, doubl
 //------------------------------------------------------------------------------------------------------------------------------
 #ifdef  USE_GSRB
 #warning GSRB is not recommended for the 27pt operator
+#ifndef GSRB_IN_PLACE
 #define GSRB_OOP
+#endif
 #define NUM_SMOOTHS      2 // RBRB
 #include "operators/gsrb.c"
 #elif   USE_CHEBY
@@ -150,7 +294,6 @@ void rebuild_operator(level_type * level, level_type *fromLevel, double a, doubl
 #include "operators/exchange_boundary.c"
 #include "operators/boundary_fd.c" // 27pt uses cell centered, not cell averaged
 //#include "operators/boundary_fv.c"
-#include "operators/matmul.c"
 #include "operators/restriction.c"
 #include "operators/interpolation_p2.c"
 //#include "operators/interpolation_v2.c"

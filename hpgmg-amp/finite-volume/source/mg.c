@@ -1,3 +1,33 @@
+/*******************************************************************************
+Copyright (c) 2016 Advanced Micro Devices, Inc. 
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice, 
+this list of conditions and the following disclaimer in the documentation 
+and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+may be used to endorse or promote products derived from this software without
+specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*******************************************************************************/
 //------------------------------------------------------------------------------------------------------------------------------
 // Samuel Williams
 // SWWilliams@lbl.gov
@@ -75,6 +105,20 @@ void MGPrintTiming(mg_type *all_grids, int fromLevel){
   total=0;printf("residual                  ");for(level=fromLevel;level<(num_levels  );level++){time=scale*(double)all_grids->levels[level]->timers.residual;             total+=time;printf("%12.6f ",time);}printf("%12.6f\n",total);
   total=0;printf("applyOp                   ");for(level=fromLevel;level<(num_levels  );level++){time=scale*(double)all_grids->levels[level]->timers.apply_op;             total+=time;printf("%12.6f ",time);}printf("%12.6f\n",total);
   total=0;printf("BLAS1                     ");for(level=fromLevel;level<(num_levels  );level++){time=scale*(double)all_grids->levels[level]->timers.blas1;                total+=time;printf("%12.6f ",time);}printf("%12.6f\n",total);
+  #ifdef BLAS1_DETAIL
+  total=0;printf("  blas1_zero_vector       ");for(level=fromLevel;level<(num_levels  );level++){time=scale*(double)all_grids->levels[level]->timers.blas1_zero_vector;    total+=time;printf("%12.6f ",time);}printf("%12.6f\n",total);
+  total=0;printf("  blas1_init_vector       ");for(level=fromLevel;level<(num_levels  );level++){time=scale*(double)all_grids->levels[level]->timers.blas1_init_vector;    total+=time;printf("%12.6f ",time);}printf("%12.6f\n",total);
+  total=0;printf("  blas1_add_vectors       ");for(level=fromLevel;level<(num_levels  );level++){time=scale*(double)all_grids->levels[level]->timers.blas1_add_vectors;    total+=time;printf("%12.6f ",time);}printf("%12.6f\n",total);
+  total=0;printf("  blas1_mul_vectors       ");for(level=fromLevel;level<(num_levels  );level++){time=scale*(double)all_grids->levels[level]->timers.blas1_mul_vectors;    total+=time;printf("%12.6f ",time);}printf("%12.6f\n",total);
+  total=0;printf("  blas1_invert_vectors    ");for(level=fromLevel;level<(num_levels  );level++){time=scale*(double)all_grids->levels[level]->timers.blas1_invert_vector;  total+=time;printf("%12.6f ",time);}printf("%12.6f\n",total);
+  total=0;printf("  blas1_scale_vector      ");for(level=fromLevel;level<(num_levels  );level++){time=scale*(double)all_grids->levels[level]->timers.blas1_scale_vector;   total+=time;printf("%12.6f ",time);}printf("%12.6f\n",total);
+  total=0;printf("  blas1_dot               ");for(level=fromLevel;level<(num_levels  );level++){time=scale*(double)all_grids->levels[level]->timers.blas1_dot;            total+=time;printf("%12.6f ",time);}printf("%12.6f\n",total);
+  total=0;printf("  blas1_norm              ");for(level=fromLevel;level<(num_levels  );level++){time=scale*(double)all_grids->levels[level]->timers.blas1_norm;           total+=time;printf("%12.6f ",time);}printf("%12.6f\n",total);
+  total=0;printf("  blas1_mean              ");for(level=fromLevel;level<(num_levels  );level++){time=scale*(double)all_grids->levels[level]->timers.blas1_mean;           total+=time;printf("%12.6f ",time);}printf("%12.6f\n",total);
+  total=0;printf("  blas1_shift_vector      ");for(level=fromLevel;level<(num_levels  );level++){time=scale*(double)all_grids->levels[level]->timers.blas1_shift_vector;   total+=time;printf("%12.6f ",time);}printf("%12.6f\n",total);
+  total=0;printf("  blas1_color_vector      ");for(level=fromLevel;level<(num_levels  );level++){time=scale*(double)all_grids->levels[level]->timers.blas1_color_vector;   total+=time;printf("%12.6f ",time);}printf("%12.6f\n",total);
+  total=0;printf("  blas1_random_vector     ");for(level=fromLevel;level<(num_levels  );level++){time=scale*(double)all_grids->levels[level]->timers.blas1_random_vector;  total+=time;printf("%12.6f ",time);}printf("%12.6f\n",total);
+  #endif // BLAS1_DETAIL
   total=0;printf("BLAS3                     ");for(level=fromLevel;level<(num_levels  );level++){time=scale*(double)all_grids->levels[level]->timers.blas3;                total+=time;printf("%12.6f ",time);}printf("%12.6f\n",total);
   total=0;printf("Boundary Conditions       ");for(level=fromLevel;level<(num_levels  );level++){time=scale*(double)all_grids->levels[level]->timers.boundary_conditions;  total+=time;printf("%12.6f ",time);}printf("%12.6f\n",total);
   total=0;printf("Restriction               ");for(level=fromLevel;level<(num_levels  );level++){time=scale*(double)all_grids->levels[level]->timers.restriction_total;    total+=time;printf("%12.6f ",time);}printf("%12.6f\n",total);

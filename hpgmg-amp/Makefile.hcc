@@ -1,63 +1,126 @@
-# Makefile for AMD HCC and mpich version of HPGMG-FV
+# Makefile for c++hcc (clamp) and mpich
 # Supports a mix of c and cpp files
+# Note that the compiler may require CLAMP_NOTILECHECK to be set to ON.
+# Either export it or do something like
+# make -f Makefile.hcc clean ;CLAMP_NOTILECHECK=ON make MODEL=LC -f Makefile.hcc
+
+MPI ?= false
+OPENMP ?= false
+CONSTANT_COEFF ?= false
+
+# SMOOTHER can be CHEBY or GSRB or JACOBI or L1JACOBI
+SMOOTHER ?= JACOBI
+
+# OPERATOR can be 7pt or 27pt for old stuff
+# or fv2 or fv4 for newer. fv2 is a 7pt order 2 stencil.
+OPERATOR ?= fv2
+
+# MODEL can be LC (default) or HSAIL
+# use HSAIL for APU
+# use LC for discrete cards (currently Fiji)
+# OLD is for Pre-Rocm systems.
+# C99 is a dummy value I use to get non-GPU build
+
+MODEL ?= LC
+
+ifeq ($(MODEL),LC)
+HCC_BASE=/opt/rocm/hcc-lc
+CMODE ?= clamp
+else
+ifeq ($(MODEL),HSAIL)
+HCC_BASE = /opt/rocm/hcc-hsail
+CMODE ?= hcc
+else
+ifeq ($(MODEL),OLD)
+HCC_BASE = /opt/hcc
+CMODE ?= clamp
+else
+HCC_BASE =
+CMODE ?= c99
+endif
+endif
+endif
+
+# $(info MODEL is "$(MODEL)" CMODE is "$(CMODE)")
+
+#This should be linked to the right place, but may not be
+#HCC_BASE=/opt/rocm/hcc
+
+ifeq ($(CMODE),clamp)
+# Default is for TILE_BKJ
+USE_GPU = -DUSE_GPU
+USE_GPU += -DUSE_GPU_FOR_SMOOTH
+GPU_DIM ?= 4
+GPU_TILE_DIM ?= 3
+VERSION ?= $(USE_GPU) -DGPU_ARRAY_VIEW -DGPU_DIM=$(GPU_DIM) -DGPU_TILE_DIM=$(GPU_TILE_DIM)
+
+BBS ?= 1
+KBS ?= 2
+JBS ?= 8
+IBS ?= 32
+TILING= -DGPU_TILE_BLOCKS=$(BBS) -DGPU_TILE_K=$(KBS) -DGPU_TILE_J=$(JBS) -DGPU_TILE_I=$(IBS)
+else
+ifeq ($(CMODE),hcc)
+USE_GPU = -DUSE_GPU
+USE_GPU += -DUSE_GPU_FOR_BLAS
+USE_GPU += -DUSE_GPU_FOR_RESIDUAL
+USE_GPU += -DUSE_GPU_FOR_RESTRICT
+USE_GPU += -DUSE_GPU_FOR_SMOOTH
+GPU_DIM ?= 4
+GPU_TILE_DIM ?= 3
+VERSION ?= $(USE_GPU) -DGPU_DIM=$(GPU_DIM) -DGPU_TILE_DIM=$(GPU_TILE_DIM)
+
+#This tends to work about as well as anything
+BBS ?= 1
+KBS ?= 2
+JBS ?= 8
+IBS ?= 32
+TILING= -DGPU_TILE_BLOCKS=$(BBS) -DGPU_TILE_K=$(KBS) -DGPU_TILE_J=$(JBS) -DGPU_TILE_I=$(IBS)
+else
+VERSION = -DGPU_NONE
+endif
+endif
 
 OBJDIR = build/obj/finite-volume/source
 BINDIR = build/bin
 SRCDIR = finite-volume/source
-# OPERATOR can be 7pt, or 27pt for old stuff
-# of fv2 or fv4 for newer
-# fv2 is a 7pt order 2 stencil.
-OPERATOR=7pt
 
-# Default is 8 for these values, but 64 works better with GPU
+# Default is 8 for these values, but larger works better with GPU
 #BLOCKCOPY=-DBLOCKCOPY_TILE_K=64 -DBLOCKCOPY_TILE_J=64
-BLOCKCOPY=-DBLOCKCOPY_TILE_K=64 -DBLOCKCOPY_TILE_J=64
+TILE_K ?= 32
+TILE_J ?= 32
+BLOCKCOPY=-DBLOCKCOPY_TILE_K=$(TILE_K) -DBLOCKCOPY_TILE_J=$(TILE_J)
 
-#VERSION = -DUSE_AMP -DAMP_ARRAY_VIEW=3            for array_view 3D
-#VERSION = -DUSE_AMP -DAMP_DIM=4 -DAMP_TILE_DIM=0  for 3D plus outer loop, untiled
-#VERSION = -DUSE_AMP -DAMP_DIM=4 -DAMP_TILE_DIM=3  for 3D plus outer loop, 3D tiled
-#VERSION = -DUSE_AMP -DAMP_DIM=3 -DAMP_TILE_DIM=0  for 3D, untiled
-#VERSION = -DUSE_AMP -DAMP_DIM=3 -DAMP_TILE_DIM=3  for 3D, tiled
-#VERSION = -DAMP_NONE or blank for no AMP
-VERSION = -DUSE_AMP -DAMP_DIM=3 -DAMP_TILE_DIM=3
-#VERSION =
+THRESHOLD ?= 4096
+THRESHOLDS = -DGPU_THRESHOLD=$(THRESHOLD)
 
-# TILING = -DAMP_TILE_BLOCKS=1 -DAMP_TILE_K=2 -DAMP_TILE_J=2 -DAMP_TILE_I=16
-# It does no harm to set, e.g., AMP_TILE_BLOCKS when it's not used.
-# Note there's no point making AMP_TILE_K bigger than BLOCKCOPY_TILE_K
-# or DAMP_TILE_J bigger than BLOCKCOPY_TILE_J.
-# Remember that the product of tile sizes must be <= 1024.
-#TILING = -DAMP_TILE_K=32 -DAMP_TILE_J=32
-TILING = -DAMP_TILE_BLOCKS=1 -DAMP_TILE_K=2 -DAMP_TILE_J=4 -DAMP_TILE_I=32
-
-#THRESHOLD is used only by AMP_INNER.  It does no harm having it set for other versions.
-THRESHOLD = 262144
-
-# CONSTANT can be -DSTENCIL_CONSTANT_COEFFICIENT or blank
-#CONSTANT = -DSTENCIL_CONSTANT_COEFFICIENT
+ifeq ($(CONSTANT_COEFF),false)
 CONSTANT =
-
-# LOCAL sets the variables for which to make tile_static copies on the GPU (LDS)
-# If VERSION is not AMP_TILE_STATIC, this is ignored.
-#LOCAL = -DUSElxn -DUSElbk -DUSElbj -DUSElbi -DUSElval
-# -DUSElval doesn't work for fv2 or fv4
-#  Use of LDS is currently only implemented for CHEBY smoother
-LOCAL = -DUSElxn
+else
+CONSTANT = -DSTENCIL_CONSTANT_COEFFICIENT
+endif
 
 # SOLVER can be BICGSTAB, CG, CABICGSTAT, or CACG.
 # So far only BICGSTAB has been tested
-SOLVER = BICGSTAB
+SOLVER ?= BICGSTAB
 
-# SMOOTHER can be CHEBY or GSRB or JACOBI or L1JACOBI
-SMOOTHER = GSRB
-
+ifeq ($(SMOOTHER),GSRB)
+FORCE_OOP ?= false
+FORCE_IP ?= false
 # GSRB_METHOD can be -DGSRB_FP
-# or -DGSRB_STRIDE2 (currently not implemented for AMP)
+# or -DGSRB_STRIDE2 (currently not implemented for GPU)
 # or -DGSRB_BRANCH
 # or blank.
 # No effect for SMOOTHER!=GSRB.
-# Can add -DGSRB_OOP for out of place
-GSRB_METHOD = -DGSRB_BRANCH
+# Can add -DGSRB_OOP to force out-of-place or -DGSRB_IN_PLACE to force in-place
+GSRB_METHOD ?= -DGSRB_BRANCH
+ifeq ($(FORCE_OOP),true)
+GSRB_METHOD += -DGSRB_OOP
+endif
+ifeq ($(FORCE_IP),true)
+GSRB_METHOD += -DGSRB_IN_PLACE
+endif
+endif
 
 # FUSE can be -DSTENCIL_FUSE_BC, -DSTENCIL_FUSE_DINV, both, or blank
 # Best single-processor performance is blank
@@ -70,6 +133,7 @@ BC=
 
 # PROBLEM can be -DUSE_HELMHOLTZ or blank (Poisson)
 PROBLEM =
+#PROBLEM = -DUSE_HELMHOLTZ
 
 # VCYCLES can be V, or U.  V is suggested
 VCYCLES = V
@@ -77,45 +141,122 @@ VCYCLES = V
 # FCYCLES can be -DUSE_FCYCLES=1 or blank (to use just U or V cycles)
 FCYCLES = -DUSE_FCYCLES=1
 
-HCC_HOME = /opt/hcc
-CLAMP_CONFIG = $(HCC_HOME)/bin/clamp-config
 
-#MPI_INCLUDE = /usr/include/mpich
-#MPI_LIB_DIR = /usr/lib/mpich
-MPI_INCLUDE = /usr/include/openmpi
-MPI_LIB_DIR = /usr/lib/openmpi
 
-#INCLUDES = -I. -I$(HCC_HOME)/include -I$(HCC_HOME)/include/c++/v1 \
-           -I$(MPI_INCLUDE) -I$(HCC_HOME)/lib/clang/3.5.0/include -I/usr/include
-INCLUDES = -I. -I$(MPI_INCLUDE) -I$(HCC_HOME)/include
+BASEEXEC     = hpgmg-fv
 
-CC          = $(HCC_HOME)/bin/clang++
+ifeq ($(CMODE),hcc)
+CC           = $(HCC_BASE)/bin/hcc
+CC_CPPFLAGS  = $(shell $(HCC_BASE)/bin/hcc-config --install --cxxflags)
+CC_FLAGS     = -x c++ -Xclang -fhsa-ext
+HCCEXEC      = $(BASEEXEC)-$(MODEL)-hcc
+else
+ifeq ($(CMODE),clamp)
+CC           = $(HCC_BASE)/bin/clang++
+CC_CPPFLAGS  = $(shell $(HCC_BASE)/bin/clamp-config --install --cxxflags)
+CC_FLAGS     = -x c++ -Xclang -fhsa-ext
+HCCEXEC      = $(BASEEXEC)-$(MODEL)-clamp
+else
+ifeq ($(CMODE),icc)
+CC           = icc
+CC_CPPFLAGS  =
+CC_FLAGS     =
+HCCEXEC      = $(BASEEXEC)-icc
+VERSION = -DGPU_NONE
+else
+#Don't use GPU
+CC           = /usr/bin/c99
+CC_CPPFLAGS  =
+CC_FLAGS     =
+HCCEXEC      = $(BASEEXEC)-c99
+VERSION = -DGPU_NONE
+endif
+endif
+endif
 
-CC_CPPFLAGS = $(shell $(CLAMP_CONFIG) --install --cxxflags)
-CC_CPPFLAGS += -std=c++amp -DUSE_MPI=1 -DUSE_SUBCOMM=1 $(FUSE) $(BC)
+LMODE        ?= $(CMODE)
+LD           = $(CC)
+
+ifeq ($(LMODE),hcc)
+LDFLAGS      = $(VERBOSE) -g $(OPENMP_FLAG) $(shell $(HCC_BASE)/bin/hcc-config --install --ldflags)
+else
+ifeq ($(LMODE),clamp)
+LDFLAGS      = $(VERBOSE) -g $(OPENMP_FLAG) $(shell $(HCC_BASE)/bin/clamp-config --install --ldflags)
+else
+LDFLAGS      = $(VERBOSE) -g $(OPENMP_FLAG)  -lc
+endif
+endif
+
+
+LDLIBS = -lm
+
+ifeq ($(MPI),true)
+# mpich is currently having problems.
+# Links OK, but blows up at runtime.
+#MPI_INCLUDE = -I/usr/include/mpich
+#MPI_LIB_DIR = -L/usr/lib/mpich
+
+MPI_INCLUDE = -I/usr/include/openmpi
+MPI_LIB_DIR = -L/usr/lib/openmpi
+
+USE_MPI= -DUSE_MPI=1
+USE_SUBCOMM= -DUSE_SUBCOMM=1
+MPI_LIB=-lmpi
+LDFLAGS += $(MPI_LIB_DIR)
+MPIEXEC = $(HCCEXEC)-mpi
+
+else
+MPI_INCLUDE=
+MPI_LIB_DIR=
+USE_MPI=
+USE_SUBCOMM=
+MPI_LIB=
+MPIEXEC = $(HCCEXEC)
+endif
+
+ifeq ($(OPENMP),true)
+ifeq ($(CMODE),icc)
+OPENMP_FLAG = -qopenmp
+else
+OPENMP_FLAG = -fopenmp
+GCC_VERSION ?= 4.8
+OPENMP_INCLUDE = -I/usr/lib/gcc/x86_64-linux-gnu/$(GCC_VERSION)/include
+endif
+OMPEXEC = $(MPIEXEC)-omp
+else
+OPENMP_FLAG =
+OPENMP_INCLUDE =
+OMPEXEC = $(MPIEXEC)
+endif
+
+EXEC = $(OMPEXEC)
+
+
+INCLUDES = -I. $(MPI_INCLUDE) $(OPENMP_INCLUDE)
+
+CC_CPPFLAGS += $(USE_MPI) $(USE_SUBCOMM)
 CC_CPPFLAGS += -DUSE_$(VCYCLES)CYCLES=1 -DUSE_$(SMOOTHER)=1 $(PROBLEM)
-CC_CPPFLAGS += $(FCYCLES)
-CC_CPPFLAGS += $(VERSION)
+CC_CPPFLAGS += $(FUSE) $(BC) $(FCYCLES) $(VERSION)
 CC_CPPFLAGS += -DUSE_$(SOLVER)=1
 CC_CPPFLAGS += $(GSRB_METHOD)
 CC_CPPFLAGS += $(TILING)
 CC_CPPFLAGS += -DOPERATOR_$(OPERATOR)
-CC_CPPFLAGS += -DAMP_INNER_THRESHOLD=$(THRESHOLD)
+CC_CPPFLAGS += $(THRESHOLDS)
 CC_CPPFLAGS += $(BLOCKCOPY)
 CC_CPPFLAGS += $(LOCAL)
 CC_CPPFLAGS += $(CONSTANT)
-#CC_CPPFLAGS += -DDUMP_ITERATION_COUNT
-#CC_CPPFLAGS += -DDUMP_BLOCK_SIZES
+#CC_CPPFLAGS += -DBLAS1_DETAIL
+CC_CPPFLAGS += -DPRINT_DETAILS
 
-#CC_FLAGS    = -Xclang -fhsa-ext -O3
-CC_FLAGS    = -Xclang -fhsa-ext -O3 -march=bdver2 -mavx -ffast-math
+ifeq ($(CMODE),icc)
+CC_FLAGS    += $(VERBOSE) -fast -mavx $(OPENMP_FLAG)
+else
+CC_FLAGS    += $(VERBOSE) -O3 -march=native -mavx -ffast-math $(OPENMP_FLAG)
+endif
 
-LD      = $(HCC_HOME)/bin/clang++
-LDFLAGS = -g -L$(MPI_LIB_DIR) $(shell $(CLAMP_CONFIG) --install --ldflags)
 
-LDLIBS = -lmpi
+LDLIBS += $(MPI_LIB)
 
-EXEC = hpgmg-fv-hcc
 
 OBJS = $(OBJDIR)/hpgmg-fv.o \
        $(OBJDIR)/level.o \
@@ -136,7 +277,7 @@ $(OBJDIR)/level.o: $(SRCDIR)/level.c $(SRCDIR)/*.h
 $(OBJDIR)/mg.o: $(SRCDIR)/mg.c $(SRCDIR)/*.h
 	$(CC) $(CC_CPPFLAGS) $(INCLUDES) $(CC_FLAGS) -c $< -o $@
 
-$(OBJDIR)/operators.$(OPERATOR).o: $(SRCDIR)/operators.$(OPERATOR).c Makefile.amp $(SRCDIR)/*.h $(SRCDIR)/operators/*.c
+$(OBJDIR)/operators.$(OPERATOR).o: $(SRCDIR)/operators.$(OPERATOR).c Makefile.hcc $(SRCDIR)/*.h $(SRCDIR)/operators/*.c
 	$(CC) $(CC_CPPFLAGS) $(INCLUDES) $(CC_FLAGS) -c $< -o $@
 
 $(OBJDIR)/solvers.o: $(SRCDIR)/solvers.c $(SRCDIR)/*.h $(SRCDIR)/solvers/*.c
@@ -147,7 +288,7 @@ $(OBJDIR)/timers.o: $(SRCDIR)/timers.c $(SRCDIR)/timers.h $(SRCDIR)/timers/*.c
 
 .PHONY=clean objdir_exist bindir_exist
 clean:
-	rm $(OBJDIR)/*.o $(BINDIR)/hpgmg-fv-hcc
+	rm -f $(OBJDIR)/*.o $(BINDIR)/$(EXEC)
 
 objdir_exist:
 	mkdir -p $(OBJDIR)

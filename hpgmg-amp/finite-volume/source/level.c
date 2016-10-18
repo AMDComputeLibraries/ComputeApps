@@ -1,3 +1,33 @@
+/*******************************************************************************
+Copyright (c) 2016 Advanced Micro Devices, Inc. 
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice, 
+this list of conditions and the following disclaimer in the documentation 
+and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+may be used to endorse or promote products derived from this software without
+specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*******************************************************************************/
 //------------------------------------------------------------------------------------------------------------------------------
 // Samuel Williams
 // SWWilliams@lbl.gov
@@ -16,6 +46,8 @@
 #include <omp.h>
 #endif
 //------------------------------------------------------------------------------------------------------------------------------
+#include "timers.h"
+#include "defines.h"
 #include "level.h"
 #include "operators.h"
 //------------------------------------------------------------------------------------------------------------------------------
@@ -247,12 +279,11 @@ void decompose_level_bisection(int *rank_of_box, int jStride, int kStride, int i
 
 
 //---------------------------------------------------------------------------------------------------------------------------------------------------
-int decompose_level_zmort(int *rank_of_box, int boxes_in_i, int boxes_in_j, int boxes_in_k, int ilo, int jlo, int klo, int idim, int jdim, int kdim, int ranks, int sfc_offset, int sfc_max_length){
-  // given a power of two bounding box (idim,jdim,kdim) recursively assign the boxes within the (boxes_in_i,boxes_in_j,boxes_in_k) domain using a Z-morton Space Filling Curve (SFC)
-  // sfc_offset is the current offset within the space filling curve
+// Given a bounding box (idim,jdim,kdim) use a Z-morton Space Filling Curve (SFC) to assign the boxes within the (boxes_in_i,boxes_in_j,boxes_in_k) valid region domain
+//  sfc_offset is the current offset within the space filling curve (starts with 0)
+//  this function returns the new offset based on how many actual boxes it found within (ilo,jlo,klo) + (idim,jdim,kdim)
   // sfc_max_length is the maximum length of the SFC.  Note, if this length exceeds boxes_in_i*boxes_in_j*boxes_in_k, then some processes with receive no work
-  // this function returns the new offset based on how many boxes it found within (ilo,jlo,klo) + (idim,jdim,kdim)
-  // idim, jdim, and kdim MUST BE powers of two !!!
+int decompose_level_zmort(int *rank_of_box, int boxes_in_i, int boxes_in_j, int boxes_in_k, int ilo, int jlo, int klo, int idim, int jdim, int kdim, int ranks, int sfc_offset, int sfc_max_length){
 
   // invalid cases...
   if(idim<1)return(sfc_offset);
@@ -279,13 +310,13 @@ int decompose_level_zmort(int *rank_of_box, int boxes_in_i, int boxes_in_j, int 
   int kmid = klo + (kdim/2);
 
   sfc_offset=decompose_level_zmort(rank_of_box,boxes_in_i,boxes_in_j,boxes_in_k,ilo ,jlo ,klo ,idim/2,jdim/2,kdim/2,ranks,sfc_offset,sfc_max_length);
-  sfc_offset=decompose_level_zmort(rank_of_box,boxes_in_i,boxes_in_j,boxes_in_k,imid,jlo ,klo ,idim/2,jdim/2,kdim/2,ranks,sfc_offset,sfc_max_length);
-  sfc_offset=decompose_level_zmort(rank_of_box,boxes_in_i,boxes_in_j,boxes_in_k,ilo ,jmid,klo ,idim/2,jdim/2,kdim/2,ranks,sfc_offset,sfc_max_length);
-  sfc_offset=decompose_level_zmort(rank_of_box,boxes_in_i,boxes_in_j,boxes_in_k,imid,jmid,klo ,idim/2,jdim/2,kdim/2,ranks,sfc_offset,sfc_max_length);
-  sfc_offset=decompose_level_zmort(rank_of_box,boxes_in_i,boxes_in_j,boxes_in_k,ilo ,jlo ,kmid,idim/2,jdim/2,kdim/2,ranks,sfc_offset,sfc_max_length);
-  sfc_offset=decompose_level_zmort(rank_of_box,boxes_in_i,boxes_in_j,boxes_in_k,imid,jlo ,kmid,idim/2,jdim/2,kdim/2,ranks,sfc_offset,sfc_max_length);
-  sfc_offset=decompose_level_zmort(rank_of_box,boxes_in_i,boxes_in_j,boxes_in_k,ilo ,jmid,kmid,idim/2,jdim/2,kdim/2,ranks,sfc_offset,sfc_max_length);
-  sfc_offset=decompose_level_zmort(rank_of_box,boxes_in_i,boxes_in_j,boxes_in_k,imid,jmid,kmid,idim/2,jdim/2,kdim/2,ranks,sfc_offset,sfc_max_length);
+  sfc_offset=decompose_level_zmort(rank_of_box,boxes_in_i,boxes_in_j,boxes_in_k,imid,jlo ,klo ,idim-idim/2,     jdim/2,     kdim/2,ranks,sfc_offset,sfc_max_length);
+  sfc_offset=decompose_level_zmort(rank_of_box,boxes_in_i,boxes_in_j,boxes_in_k,ilo ,jmid,klo ,     idim/2,jdim-jdim/2,     kdim/2,ranks,sfc_offset,sfc_max_length);
+  sfc_offset=decompose_level_zmort(rank_of_box,boxes_in_i,boxes_in_j,boxes_in_k,imid,jmid,klo ,idim-idim/2,jdim-jdim/2,     kdim/2,ranks,sfc_offset,sfc_max_length);
+  sfc_offset=decompose_level_zmort(rank_of_box,boxes_in_i,boxes_in_j,boxes_in_k,ilo ,jlo ,kmid,     idim/2,     jdim/2,kdim-kdim/2,ranks,sfc_offset,sfc_max_length);
+  sfc_offset=decompose_level_zmort(rank_of_box,boxes_in_i,boxes_in_j,boxes_in_k,imid,jlo ,kmid,idim-idim/2,     jdim/2,kdim-kdim/2,ranks,sfc_offset,sfc_max_length);
+  sfc_offset=decompose_level_zmort(rank_of_box,boxes_in_i,boxes_in_j,boxes_in_k,ilo ,jmid,kmid,     idim/2,jdim-jdim/2,kdim-kdim/2,ranks,sfc_offset,sfc_max_length);
+  sfc_offset=decompose_level_zmort(rank_of_box,boxes_in_i,boxes_in_j,boxes_in_k,imid,jmid,kmid,idim-idim/2,jdim-jdim/2,kdim-kdim/2,ranks,sfc_offset,sfc_max_length);
   return(sfc_offset);
 
 }
@@ -1033,7 +1064,7 @@ void create_vectors(level_type *level, int numVectors){
     level->vectors = (double **)malloc(numVectors*sizeof(double*));
     if((numVectors>0)&&(level->vectors==NULL)){fprintf(stderr,"malloc failed - level->vectors\n");exit(0);}
     uint64_t c;for(c=0;c<numVectors;c++){level->vectors[c] = tmpbuf + (uint64_t)c*level->num_my_boxes*level->box_volume;}
-  #else
+  #else // VECTOR_MALLOC_BULK
     // allocate vectors individually (simple, but may cause conflict misses)
     double ** old_vectors = level->vectors;
     level->vectors = (double **)malloc(numVectors*sizeof(double*));
@@ -1138,6 +1169,7 @@ void create_level(level_type *level, int boxes_in_i, int box_dim, int box_ghosts
   level->num_my_blocks    = 0;
   level->allocated_blocks = 0;
   level->tag              = log2(level->dim.i);
+  level->fluxes           = NULL;
 
 
   // allocate 3D array of integers to hold the MPI rank of the corresponding box and initialize to -1 (unassigned)
@@ -1160,12 +1192,16 @@ void create_level(level_type *level, int boxes_in_i, int box_dim, int box_ghosts
   if(my_rank==0){fprintf(stdout,"  Decomposing level via recursive bisection... ");fflush(stdout);}
   decompose_level_bisection(level->rank_of_box,level->boxes_in.i,level->boxes_in.i*level->boxes_in.j,0,0,0,level->boxes_in.i,level->boxes_in.j,level->boxes_in.k,num_ranks,0,level->boxes_in.i*level->boxes_in.j*level->boxes_in.k);
   #else//#elif DECOMPOSE_ZMORT
-  // Function mandates idim, jdim, and kdim are powers of two, but is smart enough to only apply the SFC within the valid domain
-  // As such, create a power of two bounding box for a potentially non power of two domain...
   if(my_rank==0){fprintf(stdout,"  Decomposing level via Z-mort ordering... ");fflush(stdout);}
-  int idim_padded=1;while(idim_padded<level->boxes_in.i)idim_padded*=2;;
-  int jdim_padded=1;while(jdim_padded<level->boxes_in.j)jdim_padded*=2;;
-  int kdim_padded=1;while(kdim_padded<level->boxes_in.k)kdim_padded*=2;;
+  #if 0 // Z-Mort over a power of two bounding box skipping boxes outside the domain
+  int idim_padded=1;while(idim_padded<level->boxes_in.i)idim_padded*=2;
+  int jdim_padded=1;while(jdim_padded<level->boxes_in.j)jdim_padded*=2;
+  int kdim_padded=1;while(kdim_padded<level->boxes_in.k)kdim_padded*=2;
+  #else // Z-Mort over the valid domain wtih odd-sized base cases (i.e. zmort on 3x3)
+  int idim_padded=level->boxes_in.i;
+  int jdim_padded=level->boxes_in.j;
+  int kdim_padded=level->boxes_in.k;
+  #endif
   decompose_level_zmort(level->rank_of_box,level->boxes_in.i,level->boxes_in.j,level->boxes_in.k,0,0,0,idim_padded,jdim_padded,kdim_padded,num_ranks,0,level->boxes_in.i*level->boxes_in.j*level->boxes_in.k);
   #endif
   if(my_rank==0){fprintf(stdout,"done\n");fflush(stdout);}
@@ -1219,17 +1255,20 @@ void create_level(level_type *level, int boxes_in_i, int box_dim, int box_ghosts
   }
 
 
-  // build an assists data structure which specifies which cells are within the domain (used with STENCIL_FUSE_BC)
-  initialize_valid_region(level);
 
 
   // build an assist structure for Gauss Seidel Red Black that would facilitate unrolling and SIMDization...
+  level->RedBlack_base = NULL;
   level->RedBlack_FP = NULL;
   if(level->num_my_boxes){
     int i,j;
     int kStride = level->my_boxes[0].kStride;
     int jStride = level->my_boxes[0].jStride;
-    level->RedBlack_FP = (double*)malloc(2*kStride*sizeof(double));
+    level->RedBlack_base = (double*)malloc(2*kStride*sizeof(double)+256); // used for free()
+    level->RedBlack_FP   = level->RedBlack_base; // aligned version
+    // align first *non-ghost* zone element to a 64-Byte boundary...
+    while( (uint64_t)(level->RedBlack_FP + level->box_ghosts*(1+level->box_jStride)) & 0x3f ){level->RedBlack_FP++;}
+    // initialize RedBlack array...
     for(j=0-level->box_ghosts;j<level->box_dim+level->box_ghosts;j++){
     for(i=0-level->box_ghosts;i<level->box_dim+level->box_ghosts;i++){
       int ij = (i+level->box_ghosts) + (j+level->box_ghosts)*jStride;
@@ -1240,6 +1279,11 @@ void create_level(level_type *level, int boxes_in_i, int box_dim, int box_ghosts
         level->RedBlack_FP[ij        ]=0.0;
         level->RedBlack_FP[ij+kStride]=1.0;
       }
+      // Never update ghost zones
+      //if( (i<0) || (i>=level->box_dim) || (j<0) || (j>=level->box_dim) ){
+      //  level->RedBlack_FP[ij        ]=0.0;
+      //  level->RedBlack_FP[ij+kStride]=0.0;
+      //}
     }}
   }
 
@@ -1283,6 +1327,20 @@ void reset_level_timers(level_type *level){
   level->timers.apply_op                = 0;
   level->timers.residual                = 0;
   level->timers.blas1                   = 0;
+#if defined(BLAS1_DETAIL)
+  level->timers.blas1_zero_vector       = 0;
+  level->timers.blas1_init_vector       = 0;
+  level->timers.blas1_add_vectors       = 0;
+  level->timers.blas1_mul_vectors       = 0;
+  level->timers.blas1_invert_vector     = 0;
+  level->timers.blas1_scale_vector      = 0;
+  level->timers.blas1_dot               = 0;
+  level->timers.blas1_norm              = 0;
+  level->timers.blas1_mean              = 0;
+  level->timers.blas1_shift_vector      = 0;
+  level->timers.blas1_color_vector      = 0;
+  level->timers.blas1_random_vector     = 0;
+#endif // BLAS1_DETAIL
   level->timers.blas3                   = 0;
   level->timers.boundary_conditions     = 0;
   level->timers.restriction_total       = 0;
@@ -1328,7 +1386,7 @@ void destroy_level(level_type *level){
   if(level->rank_of_box )free(level->rank_of_box);
   if(level->my_boxes    )free(level->my_boxes);
   if(level->my_blocks   )free(level->my_blocks);
-  if(level->RedBlack_FP )free(level->RedBlack_FP);
+  if(level->RedBlack_base)free(level->RedBlack_base);
 
   // FP vector data...
   #ifdef VECTOR_MALLOC_BULK
