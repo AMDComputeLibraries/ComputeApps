@@ -3,7 +3,7 @@
 #===============================================================================
 
 COMPILER     = hcc
-MODEL        = hsail
+MODEL        = lc
 HCC_ARR_VIEW = no
 OPTIMIZE     = no
 DEBUG        = no
