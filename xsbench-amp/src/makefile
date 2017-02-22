@@ -49,7 +49,7 @@ ifeq ($(COMPILER),hcc)
 
   ifeq ($(MODEL),lc)
     #dGPU
-    HCC_HOME = /opt/rocm/hcc-lc
+    HCC_HOME = /opt/rocm/hcc
   else
   ifeq ($(MODEL),hsail)
     #APU

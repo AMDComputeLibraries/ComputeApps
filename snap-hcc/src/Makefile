@@ -8,7 +8,7 @@ MODEL ?= LC
 ifeq ($(MODEL),LC)
 # dGPU version
 $(info building for discrete GPU with ROCM)
-CPPAMP_BUILD = /opt/rocm/hcc-lc
+CPPAMP_BUILD = /opt/rocm/hcc
 HCC_LC = true
 else
 ifeq ($(MODEL),HSAIL)

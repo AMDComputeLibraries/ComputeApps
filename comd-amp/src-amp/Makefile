@@ -6,7 +6,7 @@ SHELL = /bin/bash
 #HCC_HOME=/opt/rocm/hcc-hsail
 
 # dGPU Machine
-HCC_HOME=/opt/rocm/hcc-lc
+HCC_HOME=/opt/rocm/hcc
 
 HCC_CONFIG = $(HCC_HOME)/bin/hcc-config
 

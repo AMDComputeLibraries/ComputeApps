@@ -24,7 +24,7 @@ OPERATOR ?= fv2
 MODEL ?= LC
 
 ifeq ($(MODEL),LC)
-HCC_BASE=/opt/rocm/hcc-lc
+HCC_BASE=/opt/rocm/hcc
 CMODE ?= clamp
 else
 ifeq ($(MODEL),HSAIL)

@@ -7,7 +7,7 @@ HCC_ARR_VIEW = ON
 #HCC_PATH=/opt/rocm/hcc-hsail
 
 # dGPU Machine
-HCC_PATH=/opt/rocm/hcc-lc
+HCC_PATH=/opt/rocm/hcc
 
 HCC_CONFIG=$(HCC_PATH)/bin/hcc-config
 CXX = $(HCC_PATH)/bin/hcc
