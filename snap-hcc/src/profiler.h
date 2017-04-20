@@ -102,6 +102,9 @@ cl_event flux_j_write_event;
 /** \brief Get the current wallclock time */
 double wtime(void);
 
+/** \brief Initialize the timers to zero */
+void zero_timers(struct timers * timers);
+
 /** \brief Update the timers every outer */
 void outer_profiler(struct timers * timers);
 
@@ -110,4 +113,3 @@ void inner_profiler(struct timers * timers, struct problem * problem);
 
 /** \brief Update the timers every chunk with transfer times */
 void chunk_profiler(struct timers * timers);
-

@@ -41,6 +41,19 @@ double wtime(void)
     return t.tv_sec + t.tv_usec * 1.0E-6;
 }
 
+void zero_timers(struct timers * timers)
+{
+    timers->setup_time = 0.0;
+    timers->outer_source_time = 0.0;
+    timers->inner_source_time = 0.0;
+    timers->sweep_time = 0.0;
+    timers->sweep_transfer_time = 0.0;
+    timers->reduction_time = 0.0;
+    timers->simulation_time = 0.0;
+    timers->convergence_time = 0.0;
+    timers->outer_params_time = 0.0;
+}
+
 void outer_profiler(struct timers * timers)
 {
     if (!profiling)
