@@ -19,9 +19,11 @@ CC = gcc
 CFLAGS = -std=c99
 OPTFLAGS = -g -O5
 INCLUDE_PATH = /opt/AMDAPP/include
+INCLUDE_PATH = /opt/rocm/opencl/include
 INCLUDES = -I$(INCLUDE_PATH) 
 #C_LIB = -lm -framework OpenCL
-C_LIB = -lm -lOpenCL
+LIB_PATH=/opt/rocm/opencl/lib/x86_64
+C_LIB = -lm -L$(LIB_PATH) -lOpenCL
 
 
 ### If you need to specify include paths, library paths, or link flags

@@ -61,7 +61,11 @@ int binSearch(global int *boxes, int n, int nboxes, int tot_atoms)
 	while(l <= r)
 	{
 		mid = (l + r)/2;
-		
+                if (mid <= 0)
+                {
+                        break;
+                }
+
 		if(n >= boxes[mid-1] && n < boxes[mid])
 		{
 			box = mid;
