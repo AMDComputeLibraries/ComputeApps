@@ -4,7 +4,10 @@
 
 COMPILER     = hcc
 MODEL        = lc
-HCC_ARR_VIEW = no
+#HCC_ARR_TYPE = array_view
+#HCC_ARR_TYPE = array
+HCC_ARR_TYPE = am_alloc
+WHICH_ACC    = 0
 OPTIMIZE     = no
 DEBUG        = no
 PROFILE      = no
@@ -64,14 +67,21 @@ ifeq ($(COMPILER),hcc)
 
   CC = $(HCC_HOME)/bin/hcc
   LDFLAGS = $(shell $(HCC_HOME)/bin/hcc-config --install --ldflags)
-  LDLIBS  =  -lpthread -lm -lmpi -ldl -lelf -lc -lc++ -fopenmp
-
+  LDLIBS  = -lpthread -lm -lmpi -ldl -lc -fopenmp -lhc_am
   CFLAGS = -fopenmp -O3 -Wno-parentheses \
            $(shell $(HCC_HOME)/bin/hcc-config --install --cxxflags)
 
-  ifeq ($(HCC_ARR_VIEW),yes)
-    CFLAGS += -DARRAY_VIEW
+  ifeq ($(HCC_ARR_TYPE),array_view)
+    CFLAGS += -DARRAY_TYPE=0
   endif
+  ifeq ($(HCC_ARR_TYPE),array)
+    CFLAGS += -DARRAY_TYPE=1
+  endif
+  ifeq ($(HCC_ARR_TYPE),am_alloc)
+    CFLAGS += -DARRAY_TYPE=2
+  endif
+
+  CFLAGS += -DWHICH_ACC=$(WHICH_ACC)
 
 endif
 
