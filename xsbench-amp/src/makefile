@@ -16,7 +16,7 @@ PAPI         = no
 VEC_INFO     = no
 
 #Does not work for many sizes on the APU, dependent on dedicated GPU memory
-VERIFY       = yes
+VERIFY       = no
 
 BENCHMARK    = no
 BINARY_DUMP  = no
