@@ -34,17 +34,24 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include<mpi.h>
 #endif
 
-#ifdef ARRAY_VIEW
+#if ARRAY_TYPE == 0
 #define HCC_ARRAY_STRUC(type, name, size, ptr) array_view<type> name(size, ptr)
 #define HCC_ID(name)
-#define HCC_SYNC(name, ptr) name.synchronize()
-#else
+#define HCC_SYNC(type, name, size, ptr) name.synchronize()
+
+#elif ARRAY_TYPE == 1
 #define HCC_ARRAY_STRUC(type, name, size, ptr) array<type> name(size); copy(ptr, name)
 #define HCC_ID(name) ,&name
-#define HCC_SYNC(name, ptr) copy(name, ptr)
+#define HCC_SYNC(type, name, size, ptr) copy(name, ptr)
+
+#elif ARRAY_TYPE == 2
+#define HCC_ARRAY_STRUC(type, name, size, ptr) type * name = (type *)am_alloc(size*sizeof(type), acc, 0); acc_view.copy(ptr, name, size*sizeof(type));
+#define HCC_ID(name) ,name
+#define HCC_SYNC(type, name, size, ptr) acc_view.copy(name, ptr, size*sizeof(type));
 #endif
 
 #include <hc.hpp>
+#include <hc_am.hpp>
 using namespace hc;
 
 int main( int argc, char* argv[] )
@@ -59,7 +66,18 @@ int main( int argc, char* argv[] )
   double timer_start, timer_end;
   unsigned long long vhash = 0;
   int nprocs;
-  int nuc_size = 0;  
+  int nuc_size = 0;
+
+  accelerator acc;
+  std::vector<accelerator> node_acc = acc.get_all();
+  int num_acc = node_acc.size();  
+  for(int i = 0; i < num_acc; ++i){
+    if(!node_acc[i].is_hsa_accelerator()){
+      node_acc.erase(node_acc.begin()+i);
+    }
+  }
+  acc = node_acc[WHICH_ACC];
+  accelerator_view acc_view = acc.get_default_view();
 	
 #ifdef DOMPI
   MPI_Status stat;
@@ -242,7 +260,12 @@ int main( int argc, char* argv[] )
   HCC_ARRAY_STRUC(double, concs_t, nuc_size, concs);
   HCC_ARRAY_STRUC(int, mats_t, nuc_size, mats);  
 	
-  completion_future fut = parallel_for_each(extent<1>(in.lookups),[=
+  completion_future fut = parallel_for_each(acc_view, extent<1>(in.lookups),[
+                                                                   #if ARRAY_TYPE == 2
+                                                                   n_isotopes_t, n_gridpoints_t
+                                                                   #else
+                                                                   =
+                                                                   #endif
                                                                    HCC_ID(pickedMats_t)
 								   HCC_ID(pickedP_energy_t)
 								   HCC_ID(energy_grid_energy_t)
@@ -321,7 +344,7 @@ int main( int argc, char* argv[] )
 	else{
 	  low = nuclide_grids_t[p_nuc*n_gridpoints_t + energy_grid_xs_t[index*n_isotopes_t + p_nuc]];
 	  high = nuclide_grids_t[p_nuc*n_gridpoints_t + energy_grid_xs_t[index*n_isotopes_t + p_nuc] + 1];
-	}
+        }
 
 	f = (high.energy - p_energy) /
 	    (high.energy - low.energy);
@@ -334,8 +357,8 @@ int main( int argc, char* argv[] )
 	xs_vector[3] = high.fission_xs - f *
 	    (high.fission_xs - low.fission_xs);
 	xs_vector[4] = high.nu_fission_xs - f *
-	  (high.nu_fission_xs - low.nu_fission_xs);
-
+        (high.nu_fission_xs - low.nu_fission_xs);
+        
 	for( int k = 0; k < 5; k++ )
 	  macro_xs_vector[k] += xs_vector[k] * conc;
       }
@@ -375,12 +398,12 @@ int main( int argc, char* argv[] )
 #endif
 	
 #ifndef VERIFICATION
-  HCC_SYNC(check_t, check);
+  HCC_SYNC(double, check_t, 1, check);
   vhash = check[0];
 #else
-  HCC_SYNC(verify_p_energy_t, verify_p_energy);
-  HCC_SYNC(verify_mat_t, verify_mat);
-  HCC_SYNC(verify_macro_xs_vector_t, verify_macro_xs_vector);
+  HCC_SYNC(double, verify_p_energy_t, in.lookups, verify_p_energy);
+  HCC_SYNC(int, verify_mat_t, in.lookups, verify_mat);
+  HCC_SYNC(double, verify_macro_xs_vector_t, in.lookups*5, verify_macro_xs_vector);
   
   for(int i = 0; i < in.lookups; ++i){
     char line[256];
