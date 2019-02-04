@@ -25,15 +25,15 @@ MODEL ?= LC
 
 ifeq ($(MODEL),LC)
 HCC_BASE=/opt/rocm/hcc
-CMODE ?= clamp
+CMODE ?= hcc_dgpu
 else
 ifeq ($(MODEL),HSAIL)
 HCC_BASE = /opt/rocm/hcc-hsail
-CMODE ?= hcc
+CMODE ?= hcc_apu
 else
 ifeq ($(MODEL),OLD)
 HCC_BASE = /opt/hcc
-CMODE ?= clamp
+CMODE ?= hcc_dgpu
 else
 HCC_BASE =
 CMODE ?= c99
@@ -46,7 +46,7 @@ endif
 #This should be linked to the right place, but may not be
 #HCC_BASE=/opt/rocm/hcc
 
-ifeq ($(CMODE),clamp)
+ifeq ($(CMODE),hcc_dgpu)
 # Default is for TILE_BKJ
 USE_GPU = -DUSE_GPU
 USE_GPU += -DUSE_GPU_FOR_SMOOTH
@@ -60,7 +60,7 @@ JBS ?= 8
 IBS ?= 32
 TILING= -DGPU_TILE_BLOCKS=$(BBS) -DGPU_TILE_K=$(KBS) -DGPU_TILE_J=$(JBS) -DGPU_TILE_I=$(IBS)
 else
-ifeq ($(CMODE),hcc)
+ifeq ($(CMODE),hcc_apu)
 USE_GPU = -DUSE_GPU
 USE_GPU += -DUSE_GPU_FOR_BLAS
 USE_GPU += -DUSE_GPU_FOR_RESIDUAL
@@ -145,13 +145,13 @@ FCYCLES = -DUSE_FCYCLES=1
 
 BASEEXEC     = hpgmg-fv
 
-ifeq ($(CMODE),hcc)
+ifeq ($(CMODE),hcc_apu)
 CC           = $(HCC_BASE)/bin/hcc
 CC_CPPFLAGS  = $(shell $(HCC_BASE)/bin/hcc-config --install --cxxflags)
 CC_FLAGS     = -x c++ -Xclang -fhsa-ext
 HCCEXEC      = $(BASEEXEC)-$(MODEL)-hcc
 else
-ifeq ($(CMODE),clamp)
+ifeq ($(CMODE),hcc_dgpu)
 CC           = $(HCC_BASE)/bin/clang++
 CC_CPPFLAGS  = $(shell $(HCC_BASE)/bin/hcc-config --install --cxxflags)
 CC_FLAGS     = -x c++ -Xclang -fhsa-ext
@@ -177,10 +177,10 @@ endif
 LMODE        ?= $(CMODE)
 LD           = $(CC)
 
-ifeq ($(LMODE),hcc)
+ifeq ($(LMODE),hcc_apu)
 LDFLAGS      = $(VERBOSE) -g $(OPENMP_FLAG) $(shell $(HCC_BASE)/bin/hcc-config --install --ldflags)
 else
-ifeq ($(LMODE),clamp)
+ifeq ($(LMODE),hcc_dgpu)
 LDFLAGS      = $(VERBOSE) -g $(OPENMP_FLAG) $(shell $(HCC_BASE)/bin/hcc-config --install --ldflags)
 else
 LDFLAGS      = $(VERBOSE) -g $(OPENMP_FLAG)  -lc
