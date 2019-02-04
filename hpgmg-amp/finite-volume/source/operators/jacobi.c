@@ -378,6 +378,7 @@ template <int GHOSTS>void av_smooth(level_type * level, int x_id, int rhs_id, do
 #endif
         }
       PFE_END;
+      HC_WAIT;
       #elif defined(GPU_TILE_DIM)  && (GPU_TILE_DIM==3)
         extent<3> e(nBlocks*kDim,jDim,iDim);
         PFE_TILE3(e,BBS*KBS,JBS,IBS)
@@ -438,6 +439,7 @@ template <int GHOSTS>void av_smooth(level_type * level, int x_id, int rhs_id, do
           const double Ax_n   = apply_op_ijk_gpu;
           lxnp1(0,0,0) = lxn(0,0,0) + weight*llambda(ijk)*(lrhs(ijk)-Ax_n);
         PFE_END;
+        HC_WAIT;
         #elif defined(GPU_TILE_DIM) && (GPU_TILE_DIM==1)
           #define lxn(inck,incj,inci) (x_n_av(box,to_ijk(k+GHOSTS+inck,j+GHOSTS+incj,i+GHOSTS+inci)))
           #define lxnp1(inck,incj,inci) (x_np1_av(box,to_ijk(k+GHOSTS+inck,j+GHOSTS+incj,i+GHOSTS+inci)))
@@ -468,6 +470,7 @@ template <int GHOSTS>void av_smooth(level_type * level, int x_id, int rhs_id, do
             const double Ax_n   = apply_op_ijk_gpu;
             lxnp1(0,0,0) = lxn(0,0,0) + weight*llambda(ijk)*(lrhs(ijk)-Ax_n);
           PFE_END;
+          HC_WAIT;
         #elif !defined(GPU_TILE_DIM) || (GPU_TILE_DIM==0)
           #define lxn(inck,incj,inci) (x_n_av(box,to_ijk(k+GHOSTS+inck,j+GHOSTS+incj,i+GHOSTS+inci)))
           #define lxnp1(inck,incj,inci) (x_np1_av(box,to_ijk(k+GHOSTS+inck,j+GHOSTS+incj,i+GHOSTS+inci)))
@@ -499,6 +502,7 @@ template <int GHOSTS>void av_smooth(level_type * level, int x_id, int rhs_id, do
             const double Ax_n   = apply_op_ijk_gpu;
             lxnp1(0,0,0) = lxn(0,0,0) + weight*llambda(ijk)*(lrhs(ijk)-Ax_n);
           });
+          HC_WAIT;
       #else // GPU_TILE_DIM
         #error Unrecognized combination of GPU_DIM and GPU_TILE_DIM
       #endif // GPU_TILE_DIM
